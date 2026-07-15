@@ -9,12 +9,21 @@ content reveal for the hero title/items — wired into the Osmo **Cross Fade** p
 
 ```
 src/
-  index.js       Osmo page-transition boilerplate (barba + lenis + gsap). Hero wired into the registry.
+  index.js       Osmo page-transition boilerplate (barba + lenis + gsap). Effects wired into the registry.
   hero.js        initHero(scope): mounts the scene on [data-shapefield] + reveals [data-hero-reveal] content.
   shapefield.js  the three.js scene — geometry + config baked in (no runtime SVG fetch). three is bundled.
+  animations.js  scroll/text effects: initButton056, initSplitHeadings, initContentRevealScroll.
 bin/build.js     esbuild config (bundles three; barba/lenis/gsap stay ambient CDN globals).
 dist/index.js    built output → load this in Webflow.
 ```
+
+### Effects & their attributes (all re-run per barba page)
+| Effect | Trigger attribute | Notes |
+|---|---|---|
+| Hero visual + reveal | `[data-shapefield]`, `[data-hero-reveal="title"|"item"]` | see below |
+| Button 056 | `[data-button-056]` + `[data-button-056-text]` | splits label into inline-block words |
+| Heading split | `[data-split="heading"]` | masked words rise in on scroll (`markers:true` — turn off for production) |
+| Content reveal | `[data-reveal-group]` (+ `[data-reveal-group-nested]`) | per-group `data-stagger` (ms), `data-distance`, `data-start`; `data-ignore` to skip |
 
 ## Build
 
@@ -46,6 +55,7 @@ pnpm build      # → dist/index.js  (pnpm dev for watch + localhost:3000)
 <script src="https://cdn.jsdelivr.net/npm/@barba/core@2.10.3/dist/barba.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/lenis@1.3.17/dist/lenis.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.15/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.15/dist/ScrollTrigger.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.15/dist/CustomEase.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.15/dist/SplitText.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/gh/tomasmrazek92/modernvivo@main/dist/index.js"></script>
