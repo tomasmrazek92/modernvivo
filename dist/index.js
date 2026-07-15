@@ -257,7 +257,7 @@
     return () => ctx.revert();
   }
 
-  // ../newco/node_modules/.pnpm/three@0.173.0/node_modules/three/build/three.core.js
+  // node_modules/.pnpm/three@0.173.0/node_modules/three/build/three.core.js
   var REVISION = "173";
   var CullFaceNone = 0;
   var CullFaceBack = 1;
@@ -9895,7 +9895,7 @@
     }
   }
 
-  // ../newco/node_modules/.pnpm/three@0.173.0/node_modules/three/build/three.module.js
+  // node_modules/.pnpm/three@0.173.0/node_modules/three/build/three.module.js
   function WebGLAnimation() {
     let context = null;
     let isAnimating = false;
