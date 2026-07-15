@@ -33,9 +33,11 @@
     [data-shapefield] { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
     [data-shapefield] canvas { width: 100% !important; height: 100% !important; display: block; }
     .hp-hero { position: relative; }
-    /* hide the hero content around the visual (reveals wired next) */
-    .hp-hero .h1,
-    .hp-hero .hero-actions { visibility: hidden; }
+    /* pre-hide reveal targets until JS is ready (no flash). Gated by .reveal-ready on <html>,
+       which the boilerplate adds once the reveals have taken over — so the group reveal's
+       clearProps:all no longer falls back to a hiding rule. */
+    html:not(.reveal-ready) [data-reveal],
+    html:not(.reveal-ready) [data-reveal-group] > * { visibility: hidden; }
   </style>
 </head>
 
@@ -50,8 +52,8 @@
       <div data-shapefield></div>
       <div class="container-large">
         <div class="hp-hero">
-          <h1 class="h1 hero-between"><span class="hp-hero-span">Every study.</span> <span class="hp-hero-span cc-2">Every variable.</span></h1>
-          <div class="hero-actions">
+          <h1 class="h1 hero-between"><span class="hp-hero-span" data-reveal="words">Every study.</span> <span class="hp-hero-span cc-2" data-reveal="words">Every variable.</span></h1>
+          <div class="hero-actions" data-reveal-group data-stagger="120">
             <div class="u-mb-32"><div class="max-width-420"><div class="opacity-60">
               <p class="text-regular">The preclinical literature database built for drug development. Search 2.4 million indexed papers and extract the experimental conditions that actually drive study design.</p>
             </div></div></div>

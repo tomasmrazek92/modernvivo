@@ -98,6 +98,10 @@ export function initHeadingReveal(scope = document) {
         onSplit(self) {
           const targets = cfg.pick(self);
 
+          // The element may be pre-hidden via CSS (`[data-reveal]{visibility:hidden}`) to avoid a
+          // flash before JS runs — reveal it now that the split masks/tweens control the inner parts.
+          gsap.set(el, { visibility: 'visible' });
+
           // autoSplit re-runs onSplit whenever line-breaks genuinely change.
           // If we've already revealed once, don't replay — just leave it visible.
           if (el._revealed) {

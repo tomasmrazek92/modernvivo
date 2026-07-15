@@ -52,6 +52,9 @@ function initOnceFunctions() {
   if (has('[data-reveal]')) initHeadingReveal(document);
   if (has('[data-reveal-group]')) initContentRevealScroll(document);
   if (has('[data-stacking-cards-item]')) initStackingCardsParallax(document);
+
+  // reveals have set their own initial hidden state (inline) — safe to drop the CSS pre-hide gate
+  document.documentElement.classList.add('reveal-ready');
 }
 
 function initBeforeEnterFunctions(next) {
@@ -69,6 +72,8 @@ function initAfterEnterFunctions(next) {
   if (has('[data-reveal]')) initHeadingReveal(nextPage);
   if (has('[data-reveal-group]')) initContentRevealScroll(nextPage);
   if (has('[data-stacking-cards-item]')) initStackingCardsParallax(nextPage);
+
+  document.documentElement.classList.add('reveal-ready');
 
   if (hasLenis) {
     lenis.resize();
