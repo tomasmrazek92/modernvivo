@@ -5,7 +5,12 @@
 // Ambient globals loaded via CDN in Webflow: barba, Lenis, gsap, CustomEase, SplitText.
 // three is bundled into dist by esbuild (imported by ./shapefield.js).
 
-import { initButton056, initContentRevealScroll, initHeadingReveal } from './animations.js';
+import {
+  initButton056,
+  initContentRevealScroll,
+  initHeadingReveal,
+  initStackingCardsParallax,
+} from './animations.js';
 import { initHero } from './hero.js';
 
 gsap.registerPlugin(CustomEase, ScrollTrigger, SplitText);
@@ -46,6 +51,7 @@ function initOnceFunctions() {
   if (has('[data-button-056]')) initButton056(document);
   if (has('[data-reveal]')) initHeadingReveal(document);
   if (has('[data-reveal-group]')) initContentRevealScroll(document);
+  if (has('[data-stacking-cards-item]')) initStackingCardsParallax(document);
 }
 
 function initBeforeEnterFunctions(next) {
@@ -62,6 +68,7 @@ function initAfterEnterFunctions(next) {
   if (has('[data-button-056]')) initButton056(nextPage);
   if (has('[data-reveal]')) initHeadingReveal(nextPage);
   if (has('[data-reveal-group]')) initContentRevealScroll(nextPage);
+  if (has('[data-stacking-cards-item]')) initStackingCardsParallax(nextPage);
 
   if (hasLenis) {
     lenis.resize();
