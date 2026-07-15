@@ -1,0 +1,37 @@
+{
+  "name": "@tomasmrazek92/modernvivo",
+  "version": "0.0.0",
+  "description": "ModernVivo — Webflow custom code (hero visual + page transitions).",
+  "license": "ISC",
+  "author": {
+    "name": "Tomas Mrazek",
+    "url": "https://mrazek-tomas.cz/"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tomasmrazek92/modernvivo.git"
+  },
+  "type": "module",
+  "main": "src/index.js",
+  "module": "src/index.js",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "dev": "cross-env NODE_ENV=development node ./bin/build.js",
+    "build": "cross-env NODE_ENV=production node ./bin/build.js",
+    "lint": "eslint --ignore-path .gitignore ./src && prettier --check ./src",
+    "lint:fix": "eslint --ignore-path .gitignore ./src --fix",
+    "format": "prettier --write ./src"
+  },
+  "devDependencies": {
+    "@finsweet/eslint-config": "^2.0.3",
+    "cross-env": "^7.0.3",
+    "esbuild": "^0.17.12",
+    "eslint": "^8.36.0",
+    "prettier": "^2.8.4"
+  },
+  "dependencies": {
+    "three": "^0.173.0"
+  }
+}
