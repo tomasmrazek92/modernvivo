@@ -100,6 +100,11 @@ function playWhenReady(el, opts, play) {
       done = true;
       fire();
     };
+    // if the event already fired before this listener attached (e.g. reduced-motion resolves instantly), play now
+    if (window.__shapefieldResolved && window.__shapefieldResolved.has(after)) {
+      run();
+      return;
+    }
     document.addEventListener(after, run, { once: true });
     gsap.delayedCall(12, run); // safety net
     return;
@@ -360,8 +365,12 @@ export function initContentRevealScroll(scope = document) {
           done = true;
           play();
         };
-        document.addEventListener(after, run, { once: true });
-        gsap.delayedCall(12, run); // safety net if the event never fires
+        if (window.__shapefieldResolved && window.__shapefieldResolved.has(after)) {
+          run(); // event already fired before this listener attached
+        } else {
+          document.addEventListener(after, run, { once: true });
+          gsap.delayedCall(12, run); // safety net if the event never fires
+        }
       } else {
         ScrollTrigger.create({ trigger: groupEl, start: triggerStart, once: true, onEnter: play });
       }

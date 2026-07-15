@@ -48,7 +48,7 @@ function deepMerge(a, b) {
 class ShapeField {
   constructor(mount, overrides = {}) {
     this.mount = mount; this.config = deepMerge(DEFAULTS, overrides);
-    this.MAX = 6000; this._t0 = 0; this._spin = 0; this._lastT = 0; this._raf = 0; this._visible = true; this._resolved = false;
+    this.MAX = 6000; this._t0 = 0; this._spin = 0; this._lastT = 0; this._raf = 0; this._visible = true; this._resolved = false; this._started = false;
     this.reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
     if (THREE.ColorManagement) THREE.ColorManagement.enabled = false;
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
@@ -174,13 +174,19 @@ class ShapeField {
   _loop() {
     this._raf = requestAnimationFrame(this._loop);
     if (!this._visible) { this._lastT = this._clock.getElapsedTime(); return; } // parked offscreen
-    const t = this._clock.getElapsedTime(), dt = Math.min(0.05, t - this._lastT); this._lastT = t;
+    const t = this._clock.getElapsedTime();
+    // Anchor the timeline to the FIRST frame that actually renders — not construction time.
+    // Otherwise any gap (blocking fonts, heavy layout, a parked/backgrounded tab) inflates the
+    // elapsed time and the swarm + resolve event would jump straight to the end on frame one.
+    if (!this._started) { this._started = true; this._t0 = t; this._lastT = t; }
+    const dt = Math.min(0.05, t - this._lastT); this._lastT = t;
     const c = this.config, u = this.mat.uniforms; u.uTime.value = t;
     const te = this.reduced ? 1e6 : (t - this._t0), tl = c.timeline;
     const rev = Math.min(1, te/Math.max(0.01,tl.revealDur));
     const asm = Math.min(1, Math.max(0, (te-tl.revealDur-tl.hold)/Math.max(0.01,tl.assembleDur)));
     if (!this._resolved && asm >= (c.resolveAt ?? 0.78)) { // shapes have formed → let the hero content reveal
       this._resolved = true;
+      (window.__shapefieldResolved || (window.__shapefieldResolved = new Set())).add('shapefield:resolved');
       document.dispatchEvent(new CustomEvent('shapefield:resolved', { detail: { field: this } }));
     }
     u.uReveal.value=rev; u.uAssemble.value=asm; u.uRevWindow.value=tl.revWindow; u.uAsmWindow.value=tl.asmWindow;
