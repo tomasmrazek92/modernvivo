@@ -173,13 +173,15 @@ class ShapeField {
   destroy() { cancelAnimationFrame(this._raf); removeEventListener('resize', this._onResize); this._io && this._io.disconnect(); this.renderer.dispose(); this.renderer.domElement.remove(); }
   _loop() {
     this._raf = requestAnimationFrame(this._loop);
-    if (!this._visible) { this._lastT = this._clock.getElapsedTime(); return; } // parked offscreen
-    const t = this._clock.getElapsedTime();
+    const now = this._clock.getElapsedTime();
+    // Parked (offscreen / tab not compositing): FREEZE the timeline — remember when we paused.
+    if (!this._visible) { if (this._parkedAt == null) this._parkedAt = now; this._lastT = now; return; }
+    // Resuming: shift the anchor forward by however long we were parked, so `te` continues where it
+    // left off instead of jumping ahead (which would snap the swarm + resolve event to the end).
+    if (this._parkedAt != null) { this._t0 += now - this._parkedAt; this._parkedAt = null; this._lastT = now; }
     // Anchor the timeline to the FIRST frame that actually renders — not construction time.
-    // Otherwise any gap (blocking fonts, heavy layout, a parked/backgrounded tab) inflates the
-    // elapsed time and the swarm + resolve event would jump straight to the end on frame one.
-    if (!this._started) { this._started = true; this._t0 = t; this._lastT = t; }
-    const dt = Math.min(0.05, t - this._lastT); this._lastT = t;
+    if (!this._started) { this._started = true; this._t0 = now; this._lastT = now; }
+    const t = now, dt = Math.min(0.05, t - this._lastT); this._lastT = t;
     const c = this.config, u = this.mat.uniforms; u.uTime.value = t;
     const te = this.reduced ? 1e6 : (t - this._t0), tl = c.timeline;
     const rev = Math.min(1, te/Math.max(0.01,tl.revealDur));
