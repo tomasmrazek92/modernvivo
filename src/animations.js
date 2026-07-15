@@ -32,65 +32,78 @@ export function initButton056(scope = document) {
 
 // Heading reveal — single init for all heading animations.
 // Effect chosen per-element:  data-reveal="lines" | "words" | "type" | "spans"
+// Trigger:  default = on scroll into view (data-reveal-start).
+//           data-reveal-after="<event>" → wait for a one-time document event instead
+//           (e.g. "shapefield:resolved" so the hero text reveals AFTER the visual forms).
 // Optional overrides: data-reveal-start / -stagger / -duration / -once / -markers
+// Each build returns a PAUSED tween (from-state applied immediately, so targets start hidden);
+// playWhenReady() plays it when the trigger fires.
 const HEADING_REVEALS = {
   // "spans" reveals the element's own direct child elements (e.g. two <span>s) in sequence,
   // no SplitText — first one rises/fades in, then the next after a pause (data-reveal-stagger).
   spans: {
     noSplit: true,
     pick: (el) => el.querySelectorAll(':scope > *'),
-    build: (targets, o, st) =>
-      gsap.from(targets, {
-        yPercent: 110,
-        autoAlpha: 0,
-        duration: o.duration,
-        stagger: o.stagger,
-        ease: 'expo.out',
-        scrollTrigger: st,
-      }),
+    build: (targets, o) => {
+      gsap.set(targets, { yPercent: 110, autoAlpha: 0 }); // hide immediately (before the trigger)
+      return gsap.to(targets, {
+        yPercent: 0, autoAlpha: 1, duration: o.duration, stagger: o.stagger, ease: 'expo.out', paused: true,
+      });
+    },
   },
 
   lines: {
     split: { type: 'lines', mask: 'lines', autoSplit: true },
     pick: (self) => self.lines,
-    build: (targets, o, st) =>
-      gsap.from(targets, {
-        yPercent: 110,
-        duration: o.duration,
-        stagger: o.stagger,
-        ease: 'expo.out',
-        scrollTrigger: st,
-      }),
+    build: (targets, o) => {
+      gsap.set(targets, { yPercent: 110 }); // masked — translated out of view
+      return gsap.to(targets, { yPercent: 0, duration: o.duration, stagger: o.stagger, ease: 'expo.out', paused: true });
+    },
   },
 
   words: {
     split: { type: 'words', mask: 'words' },
     pick: (self) => self.words,
-    build: (targets, o, st) =>
-      gsap.from(targets, {
-        yPercent: 110,
-        duration: o.duration,
-        stagger: o.stagger,
-        ease: 'expo.out',
-        scrollTrigger: st,
-      }),
+    build: (targets, o) => {
+      gsap.set(targets, { yPercent: 110 });
+      return gsap.to(targets, { yPercent: 0, duration: o.duration, stagger: o.stagger, ease: 'expo.out', paused: true });
+    },
   },
 
   type: {
     split: { type: 'chars' },
     pick: (self) => self.chars,
-    build: (targets, o, st) => {
+    build: (targets, o) => {
       gsap.set(targets, { autoAlpha: 0 }); // hide before the trigger fires
       return gsap.to(targets, {
         autoAlpha: 1,
         duration: 0.01, // near-instant "pop" per char, not a fade
         ease: 'none',
         stagger: { each: o.stagger }, // each = fixed typing speed regardless of length
-        scrollTrigger: st,
+        paused: true,
       });
     },
   },
 };
+
+// Play a paused reveal when its trigger is reached: scroll into view by default, or a one-time
+// document event when data-reveal-after is set. A fallback timer guarantees the content never
+// stays hidden if the awaited event never fires.
+function playWhenReady(el, opts, play) {
+  const after = el.getAttribute('data-reveal-after');
+  if (after) {
+    let done = false;
+    const run = () => {
+      if (done) return;
+      done = true;
+      play();
+    };
+    document.addEventListener(after, run, { once: true });
+    gsap.delayedCall(12, run); // safety net
+    return;
+  }
+  ScrollTrigger.create({ trigger: el, start: opts.start, once: opts.once, markers: opts.markers, onEnter: play });
+}
 
 export function initHeadingReveal(scope = document) {
   // fonts.ready so line splits measure against the loaded font (avoids reflow flash)
@@ -115,12 +128,8 @@ export function initHeadingReveal(scope = document) {
         gsap.set(el, { visibility: 'visible' }); // clear the CSS pre-hide on the element
         const targets = cfg.pick(el);
         if (!targets.length) return;
-        cfg.build(targets, opts, {
-          trigger: el,
-          start: opts.start,
-          once: opts.once,
-          markers: opts.markers,
-        });
+        const tween = cfg.build(targets, opts);
+        playWhenReady(el, opts, () => tween.play());
         return;
       }
 
@@ -140,15 +149,12 @@ export function initHeadingReveal(scope = document) {
             return;
           }
 
-          const st = {
-            trigger: el,
-            start: opts.start,
-            once: opts.once,
-            markers: opts.markers,
-            onEnter: opts.once ? () => (el._revealed = true) : undefined,
-          };
-
-          return cfg.build(targets, opts, st);
+          const tween = cfg.build(targets, opts);
+          playWhenReady(el, opts, () => {
+            if (opts.once) el._revealed = true;
+            tween.play();
+          });
+          return tween;
         },
       });
     });
@@ -288,12 +294,8 @@ export function initContentRevealScroll(scope = document) {
         }
       });
 
-      // Reveal sequence
-      ScrollTrigger.create({
-        trigger: groupEl,
-        start: triggerStart,
-        once: true,
-        onEnter: () => {
+      // Reveal sequence — fire on scroll into view, or on a document event (data-reveal-after)
+      const play = () => {
           const tl = gsap.timeline();
 
           slots.forEach((slot, slotIndex) => {
@@ -344,8 +346,21 @@ export function initContentRevealScroll(scope = document) {
               });
             }
           });
-        },
-      });
+      };
+
+      const after = groupEl.getAttribute('data-reveal-after');
+      if (after) {
+        let done = false;
+        const run = () => {
+          if (done) return;
+          done = true;
+          play();
+        };
+        document.addEventListener(after, run, { once: true });
+        gsap.delayedCall(12, run); // safety net if the event never fires
+      } else {
+        ScrollTrigger.create({ trigger: groupEl, start: triggerStart, once: true, onEnter: play });
+      }
     });
   });
 

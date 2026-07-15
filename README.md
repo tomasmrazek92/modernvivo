@@ -17,6 +17,12 @@ bin/build.js     esbuild config (bundles three; barba/lenis/gsap stay ambient CD
 dist/index.js    built output → load this in Webflow.
 ```
 
+**Reveal timing** — heading (`[data-reveal]`) and group (`[data-reveal-group]`) reveals fire on scroll
+into view by default. Add `data-reveal-after="<event>"` to wait for a one-time document event instead.
+The ShapeField dispatches **`shapefield:resolved`** once the shapes have formed (at `resolveAt`, default
+0.78 of the assemble ≈ ~4.3s), so `data-reveal-after="shapefield:resolved"` reveals the hero text *after*
+the visual. A safety timer reveals anyway if the event never comes.
+
 ### Effects & their attributes (all re-run per barba page)
 | Effect | Trigger attribute | Notes |
 |---|---|---|

@@ -37,6 +37,7 @@ const DEFAULTS = {
   depth: { fog: 0.0, near: 0.5, far: 5.1 }, cloudDrift: 0.6, idleDrift: 0.063,
   merge: { amount: 1.0, speed: 0.5, dist: 0.07 }, warp: { amount: 0.0, freq: 30.0, speed: 1.65 },
   bg: '#160e2e',
+  resolveAt: 0.78, // fire the "shapefield:resolved" event when assemble is this far along (shapes formed)
 };
 function deepMerge(a, b) {
   const o = Array.isArray(a) ? a.slice() : { ...a };
@@ -47,7 +48,7 @@ function deepMerge(a, b) {
 class ShapeField {
   constructor(mount, overrides = {}) {
     this.mount = mount; this.config = deepMerge(DEFAULTS, overrides);
-    this.MAX = 6000; this._t0 = 0; this._spin = 0; this._lastT = 0; this._raf = 0; this._visible = true;
+    this.MAX = 6000; this._t0 = 0; this._spin = 0; this._lastT = 0; this._raf = 0; this._visible = true; this._resolved = false;
     this.reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
     if (THREE.ColorManagement) THREE.ColorManagement.enabled = false;
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
@@ -178,6 +179,10 @@ class ShapeField {
     const te = this.reduced ? 1e6 : (t - this._t0), tl = c.timeline;
     const rev = Math.min(1, te/Math.max(0.01,tl.revealDur));
     const asm = Math.min(1, Math.max(0, (te-tl.revealDur-tl.hold)/Math.max(0.01,tl.assembleDur)));
+    if (!this._resolved && asm >= (c.resolveAt ?? 0.78)) { // shapes have formed → let the hero content reveal
+      this._resolved = true;
+      document.dispatchEvent(new CustomEvent('shapefield:resolved', { detail: { field: this } }));
+    }
     u.uReveal.value=rev; u.uAssemble.value=asm; u.uRevWindow.value=tl.revWindow; u.uAsmWindow.value=tl.asmWindow;
     u.uEase.value=tl.easeMode; u.uRevealEase.value=tl.revealEaseMode;
     u.uArc.value=c.flow.arc; u.uFlowScale.value=c.flow.scale; u.uCloudDrift.value=c.cloudDrift; u.uIdle.value=c.idleDrift;
