@@ -18,10 +18,16 @@ dist/index.js    built output → load this in Webflow.
 ```
 
 **Reveal timing** — heading (`[data-reveal]`) and group (`[data-reveal-group]`) reveals fire on scroll
-into view by default. Add `data-reveal-after="<event>"` to wait for a one-time document event instead.
-The ShapeField dispatches **`shapefield:resolved`** once the shapes have formed (at `resolveAt`, default
-0.78 of the assemble ≈ ~4.3s), so `data-reveal-after="shapefield:resolved"` reveals the hero text *after*
-the visual. A safety timer reveals anyway if the event never comes.
+into view by default. Three ways to control *when*:
+
+- **`data-reveal-after="<event>"`** — wait for a one-time document event instead of scroll. The ShapeField
+  dispatches **`shapefield:resolved`** once the shapes have formed (at `resolveAt`, default 0.78 of the
+  assemble ≈ ~4.3s), so `data-reveal-after="shapefield:resolved"` reveals the hero text *after* the visual.
+  A safety timer reveals anyway if the event never comes.
+- **`data-reveal-delay="1.5"`** — hold N **seconds** after the trigger fires, then reveal. Works with either
+  trigger (scroll or event). e.g. scroll + `data-reveal-delay="0.5"` = half-second after it enters view.
+- **`resolveAt`** (shapefield config) — moves when `shapefield:resolved` fires. Lower = sooner.
+  `data-shapefield-config='{"resolveAt":0.6}'`.
 
 ### Effects & their attributes (all re-run per barba page)
 | Effect | Trigger attribute | Notes |

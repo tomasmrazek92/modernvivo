@@ -90,19 +90,21 @@ const HEADING_REVEALS = {
 // document event when data-reveal-after is set. A fallback timer guarantees the content never
 // stays hidden if the awaited event never fires.
 function playWhenReady(el, opts, play) {
+  // data-reveal-delay: hold for N seconds AFTER the trigger fires, before playing
+  const fire = opts.delay ? () => gsap.delayedCall(opts.delay, play) : play;
   const after = el.getAttribute('data-reveal-after');
   if (after) {
     let done = false;
     const run = () => {
       if (done) return;
       done = true;
-      play();
+      fire();
     };
     document.addEventListener(after, run, { once: true });
     gsap.delayedCall(12, run); // safety net
     return;
   }
-  ScrollTrigger.create({ trigger: el, start: opts.start, once: opts.once, markers: opts.markers, onEnter: play });
+  ScrollTrigger.create({ trigger: el, start: opts.start, once: opts.once, markers: opts.markers, onEnter: fire });
 }
 
 export function initHeadingReveal(scope = document) {
@@ -121,6 +123,7 @@ export function initHeadingReveal(scope = document) {
           (mode === 'type' ? 0.045 : mode === 'spans' ? 0.4 : 0.1),
         once: el.getAttribute('data-reveal-once') !== 'false',
         markers: el.getAttribute('data-reveal-markers') === 'true',
+        delay: parseFloat(el.getAttribute('data-reveal-delay')) || 0, // seconds after the trigger fires
       };
 
       // non-split mode (e.g. "spans"): animate the element's own children, no SplitText
@@ -211,6 +214,7 @@ export function initContentRevealScroll(scope = document) {
       const groupStaggerSec = (parseFloat(groupEl.getAttribute('data-stagger')) || 100) / 1000; // ms → sec
       const groupDistance = groupEl.getAttribute('data-distance') || '2em';
       const triggerStart = groupEl.getAttribute('data-start') || 'top 80%';
+      const groupDelay = parseFloat(groupEl.getAttribute('data-reveal-delay')) || 0; // sec after trigger
 
       const animDuration = 0.8;
       const animEase = 'power4.inOut';
@@ -296,7 +300,7 @@ export function initContentRevealScroll(scope = document) {
 
       // Reveal sequence — fire on scroll into view, or on a document event (data-reveal-after)
       const play = () => {
-          const tl = gsap.timeline();
+          const tl = gsap.timeline({ delay: groupDelay });
 
           slots.forEach((slot, slotIndex) => {
             const slotTime = slotIndex * groupStaggerSec;
