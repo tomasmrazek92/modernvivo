@@ -31,9 +31,25 @@ export function initButton056(scope = document) {
 }
 
 // Heading reveal — single init for all heading animations.
-// Effect chosen per-element:  data-reveal="lines" | "words" | "type"
+// Effect chosen per-element:  data-reveal="lines" | "words" | "type" | "spans"
 // Optional overrides: data-reveal-start / -stagger / -duration / -once / -markers
 const HEADING_REVEALS = {
+  // "spans" reveals the element's own direct child elements (e.g. two <span>s) in sequence,
+  // no SplitText — first one rises/fades in, then the next after a pause (data-reveal-stagger).
+  spans: {
+    noSplit: true,
+    pick: (el) => el.querySelectorAll(':scope > *'),
+    build: (targets, o, st) =>
+      gsap.from(targets, {
+        yPercent: 110,
+        autoAlpha: 0,
+        duration: o.duration,
+        stagger: o.stagger,
+        ease: 'expo.out',
+        scrollTrigger: st,
+      }),
+  },
+
   lines: {
     split: { type: 'lines', mask: 'lines', autoSplit: true },
     pick: (self) => self.lines,
@@ -88,10 +104,25 @@ export function initHeadingReveal(scope = document) {
         start: el.getAttribute('data-reveal-start') || 'top 80%',
         duration: parseFloat(el.getAttribute('data-reveal-duration')) || 0.8,
         stagger:
-          parseFloat(el.getAttribute('data-reveal-stagger')) || (mode === 'type' ? 0.045 : 0.1),
+          parseFloat(el.getAttribute('data-reveal-stagger')) ||
+          (mode === 'type' ? 0.045 : mode === 'spans' ? 0.4 : 0.1),
         once: el.getAttribute('data-reveal-once') !== 'false',
         markers: el.getAttribute('data-reveal-markers') === 'true',
       };
+
+      // non-split mode (e.g. "spans"): animate the element's own children, no SplitText
+      if (cfg.noSplit) {
+        gsap.set(el, { visibility: 'visible' }); // clear the CSS pre-hide on the element
+        const targets = cfg.pick(el);
+        if (!targets.length) return;
+        cfg.build(targets, opts, {
+          trigger: el,
+          start: opts.start,
+          once: opts.once,
+          markers: opts.markers,
+        });
+        return;
+      }
 
       SplitText.create(el, {
         ...cfg.split,

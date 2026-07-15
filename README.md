@@ -22,7 +22,7 @@ dist/index.js    built output → load this in Webflow.
 |---|---|---|
 | Hero visual + reveal | `[data-shapefield]`, `[data-hero-reveal="title"|"item"]` | see below |
 | Button 056 | `[data-button-056]` + `[data-button-056-text]` | splits label into inline-block words |
-| Heading reveal | `[data-reveal="lines\|words\|type"]` | lines/words slide up, `type` = typewriter. Overrides: `data-reveal-start`, `-stagger`, `-duration`, `-once="false"`, `-markers="true"` |
+| Heading reveal | `[data-reveal="lines\|words\|type\|spans"]` | lines/words slide up, `type` = typewriter, `spans` = reveal direct child spans in sequence (default 0.4s pause between). Overrides: `data-reveal-start`, `-stagger`, `-duration`, `-once="false"`, `-markers="true"` |
 | Content reveal | `[data-reveal-group]` (+ `[data-reveal-group-nested]`) | per-group `data-stagger` (ms), `data-distance`, `data-start`; `data-ignore` to skip |
 | Stacking cards | `[data-stacking-cards-item]` (+ `[data-stacking-cards-img]`) | scrub parallax — previous card drifts + its image rotates as the next scrolls up |
 
