@@ -30,28 +30,92 @@ export function initButton056(scope = document) {
   });
 }
 
-// Heading reveal — split into masked words that rise in on scroll
-export function initSplitHeadings(scope = document) {
-  const headings = scope.querySelectorAll('[data-split="heading"]');
-  headings.forEach((heading) => {
-    SplitText.create(heading, {
-      type: 'words',
-      autoSplit: true,
-      mask: 'words',
-      onSplit(instance) {
-        return gsap.from(instance.words, {
-          duration: 0.8,
-          yPercent: 110,
-          stagger: 0.1,
-          ease: 'expo.out',
-          scrollTrigger: {
-            trigger: heading,
-            start: 'top 80%',
-            once: true,
-            markers: true,
-          },
-        });
-      },
+// Heading reveal — single init for all heading animations.
+// Effect chosen per-element:  data-reveal="lines" | "words" | "type"
+// Optional overrides: data-reveal-start / -stagger / -duration / -once / -markers
+const HEADING_REVEALS = {
+  lines: {
+    split: { type: 'lines', mask: 'lines', autoSplit: true },
+    pick: (self) => self.lines,
+    build: (targets, o, st) =>
+      gsap.from(targets, {
+        yPercent: 110,
+        duration: o.duration,
+        stagger: o.stagger,
+        ease: 'expo.out',
+        scrollTrigger: st,
+      }),
+  },
+
+  words: {
+    split: { type: 'words', mask: 'words' },
+    pick: (self) => self.words,
+    build: (targets, o, st) =>
+      gsap.from(targets, {
+        yPercent: 110,
+        duration: o.duration,
+        stagger: o.stagger,
+        ease: 'expo.out',
+        scrollTrigger: st,
+      }),
+  },
+
+  type: {
+    split: { type: 'chars' },
+    pick: (self) => self.chars,
+    build: (targets, o, st) => {
+      gsap.set(targets, { autoAlpha: 0 }); // hide before the trigger fires
+      return gsap.to(targets, {
+        autoAlpha: 1,
+        duration: 0.01, // near-instant "pop" per char, not a fade
+        ease: 'none',
+        stagger: { each: o.stagger }, // each = fixed typing speed regardless of length
+        scrollTrigger: st,
+      });
+    },
+  },
+};
+
+export function initHeadingReveal(scope = document) {
+  // fonts.ready so line splits measure against the loaded font (avoids reflow flash)
+  document.fonts.ready.then(() => {
+    gsap.utils.toArray(scope.querySelectorAll('[data-reveal]')).forEach((el) => {
+      const mode = el.getAttribute('data-reveal');
+      const cfg = HEADING_REVEALS[mode];
+      if (!cfg) return; // unknown value → skip silently, no errors
+
+      const opts = {
+        start: el.getAttribute('data-reveal-start') || 'top 80%',
+        duration: parseFloat(el.getAttribute('data-reveal-duration')) || 0.8,
+        stagger:
+          parseFloat(el.getAttribute('data-reveal-stagger')) || (mode === 'type' ? 0.045 : 0.1),
+        once: el.getAttribute('data-reveal-once') !== 'false',
+        markers: el.getAttribute('data-reveal-markers') === 'true',
+      };
+
+      SplitText.create(el, {
+        ...cfg.split,
+        onSplit(self) {
+          const targets = cfg.pick(self);
+
+          // autoSplit re-runs onSplit whenever line-breaks genuinely change.
+          // If we've already revealed once, don't replay — just leave it visible.
+          if (el._revealed) {
+            gsap.set(targets, { clearProps: 'opacity,visibility,transform' });
+            return;
+          }
+
+          const st = {
+            trigger: el,
+            start: opts.start,
+            once: opts.once,
+            markers: opts.markers,
+            onEnter: opts.once ? () => (el._revealed = true) : undefined,
+          };
+
+          return cfg.build(targets, opts, st);
+        },
+      });
     });
   });
 }

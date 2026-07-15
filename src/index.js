@@ -5,7 +5,7 @@
 // Ambient globals loaded via CDN in Webflow: barba, Lenis, gsap, CustomEase, SplitText.
 // three is bundled into dist by esbuild (imported by ./shapefield.js).
 
-import { initButton056, initContentRevealScroll, initSplitHeadings } from './animations.js';
+import { initButton056, initContentRevealScroll, initHeadingReveal } from './animations.js';
 import { initHero } from './hero.js';
 
 gsap.registerPlugin(CustomEase, ScrollTrigger, SplitText);
@@ -44,7 +44,7 @@ function initOnceFunctions() {
   // Runs once on first load
   if (has('[data-shapefield]')) initHero(document);
   if (has('[data-button-056]')) initButton056(document);
-  if (has('[data-split="heading"]')) initSplitHeadings(document);
+  if (has('[data-reveal]')) initHeadingReveal(document);
   if (has('[data-reveal-group]')) initContentRevealScroll(document);
 }
 
@@ -60,7 +60,7 @@ function initAfterEnterFunctions(next) {
   // Runs after enter animation completes
   if (has('[data-shapefield]')) initHero(nextPage);
   if (has('[data-button-056]')) initButton056(nextPage);
-  if (has('[data-split="heading"]')) initSplitHeadings(nextPage);
+  if (has('[data-reveal]')) initHeadingReveal(nextPage);
   if (has('[data-reveal-group]')) initContentRevealScroll(nextPage);
 
   if (hasLenis) {

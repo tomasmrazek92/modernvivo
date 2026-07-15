@@ -22,7 +22,7 @@ dist/index.js    built output → load this in Webflow.
 |---|---|---|
 | Hero visual + reveal | `[data-shapefield]`, `[data-hero-reveal="title"|"item"]` | see below |
 | Button 056 | `[data-button-056]` + `[data-button-056-text]` | splits label into inline-block words |
-| Heading split | `[data-split="heading"]` | masked words rise in on scroll (`markers:true` — turn off for production) |
+| Heading reveal | `[data-reveal="lines\|words\|type"]` | lines/words slide up, `type` = typewriter. Overrides: `data-reveal-start`, `-stagger`, `-duration`, `-once="false"`, `-markers="true"` |
 | Content reveal | `[data-reveal-group]` (+ `[data-reveal-group-nested]`) | per-group `data-stagger` (ms), `data-distance`, `data-start`; `data-ignore` to skip |
 
 ## Build
