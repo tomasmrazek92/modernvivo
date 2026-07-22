@@ -38,6 +38,11 @@ const DEFAULTS = {
   merge: { amount: 1.0, speed: 0.5, dist: 0.07 }, warp: { amount: 0.0, freq: 30.0, speed: 1.65 },
   bg: '#160e2e',
   resolveAt: 0.78, // fire the "shapefield:resolved" event when assemble is this far along (shapes formed)
+  // Final (resolved) shape sizing. The cloud reveal is ALWAYS full-screen; only the morphed-together
+  // end state is scaled. `target` = a CSS selector (or element) whose on-screen box the resolved shape
+  // is sized to; `finalFit` = how the shape's bounding box fits that box; `finalScale` = extra multiplier
+  // (used alone when there's no target). Recomputed on resize.
+  target: null, finalFit: 'contain', finalScale: 1, finalCenter: true,
 };
 function deepMerge(a, b) {
   const o = Array.isArray(a) ? a.slice() : { ...a };
@@ -56,8 +61,12 @@ class ShapeField {
     mount.appendChild(this.renderer.domElement);
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100); this.camera.position.set(0, 0, 3.6);
-    this._buildMesh(); this.rebuild(); this._resize();
+    this._buildMesh(); this.rebuild(); this._resize(); this._applyFinalTransform();
     this._onResize = () => this._resize(); addEventListener('resize', this._onResize);
+    // the target div may reflow once webfonts load — re-fit then
+    if (this.config.target && document.fonts && document.fonts.ready) {
+      document.fonts.ready.then(() => { if (!this._destroyed) this._applyFinalTransform(); });
+    }
     this._clock = new THREE.Clock();
     // pause the render loop while the hero is scrolled out of view
     this._io = new IntersectionObserver((e) => { this._visible = e[0].isIntersecting; }, { threshold: 0 });
@@ -67,6 +76,54 @@ class ShapeField {
   _resize() {
     const r = this.mount.getBoundingClientRect(), w = Math.max(1, r.width), h = Math.max(1, r.height);
     this.renderer.setSize(w, h); this.camera.aspect = w / h; this.camera.updateProjectionMatrix();
+    this._applyFinalTransform(); // target div's px size / canvas size both changed — re-fit the resolved shape
+  }
+  // resolve config.target → an element. Accepts a real CSS selector (".foo", "#bar"), a bare class/id
+  // NAME typed without the leading "." or "#" (Webflow users naturally enter just "hp-hero-bg-shape"),
+  // or a passed element.
+  _resolveTarget() {
+    const t = this.config.target;
+    if (!t) return null;
+    if (typeof t !== 'string') return t.nodeType === 1 ? t : null;
+    const tries = [t];
+    if (/^[A-Za-z_][\w-]*$/.test(t)) tries.push('.' + t, '#' + t); // bare name → try as class, then id
+    for (const sel of tries) {
+      try { const el = document.querySelector(sel); if (el) return el; } catch (e) { /* invalid selector */ }
+    }
+    return null;
+  }
+  // Size the resolved shape to the target div's on-screen box (uFinalScale) and shift it to that box's
+  // center (uFinalOffset, world units). Both are computed from the same px→world factor and recomputed
+  // on resize. No target → just the manual finalScale, centered on the mount.
+  _applyFinalTransform() {
+    const mat = this.mat;
+    if (!mat) return;
+    const c = this.config, base = c.finalScale ?? 1;
+    let scale = base, offX = 0, offY = 0;
+    const el = this._resolveTarget();
+    if (el && this._bounds) {
+      const rect = el.getBoundingClientRect();
+      if (!rect.width || !rect.height) return; // target not laid out yet — keep current transform
+      const canvas = this.renderer.domElement;
+      const ch = canvas.clientHeight || this.mount.clientHeight || 1;
+      const visH = 2 * this.camera.position.z * Math.tan((this.camera.fov * Math.PI) / 180 / 2); // world units across canvas height @ z=0
+      const ppw = ch / visH; // css px per world unit (square pixels; uniform across the z=0 plane)
+      const sx = rect.width / (this._bounds.w * ppw);
+      const sy = rect.height / (this._bounds.h * ppw);
+      const mode = c.finalFit || 'contain';
+      const fit = mode === 'width' ? sx : mode === 'height' ? sy : mode === 'cover' ? Math.max(sx, sy) : Math.min(sx, sy);
+      scale = fit * base;
+      if (c.finalCenter) {
+        // world origin projects to the canvas center; offset the shape by the div-center → canvas-center delta
+        const cr = canvas.getBoundingClientRect();
+        const dxPx = rect.left + rect.width / 2 - (cr.left + cr.width / 2);
+        const dyPx = rect.top + rect.height / 2 - (cr.top + cr.height / 2);
+        offX = dxPx / ppw;
+        offY = -dyPx / ppw; // screen-y is down, world-y is up
+      }
+    }
+    mat.uniforms.uFinalScale.value = scale;
+    mat.uniforms.uFinalOffset.value.set(offX, offY);
   }
   _buildMesh() {
     const quad = new THREE.PlaneGeometry(1, 1), geo = new THREE.InstancedBufferGeometry();
@@ -78,7 +135,7 @@ class ShapeField {
     this.mat = new THREE.ShaderMaterial({
       transparent: true, depthTest: false, depthWrite: false,
       uniforms: {
-        uTime: { value: 0 }, uReveal: { value: 1 }, uAssemble: { value: 1 }, uRevWindow: { value: 0.5 }, uAsmWindow: { value: 1.0 }, uStartDot: { value: 0.05 },
+        uTime: { value: 0 }, uReveal: { value: 1 }, uAssemble: { value: 1 }, uRevWindow: { value: 0.5 }, uAsmWindow: { value: 1.0 }, uStartDot: { value: 0.05 }, uFinalScale: { value: 1 }, uFinalOffset: { value: new THREE.Vector2(0, 0) },
         uEase: { value: 2 }, uRevealEase: { value: 2 },
         uArc: { value: 0.5 }, uFlowScale: { value: 1.2 }, uCloudDrift: { value: 0.165 }, uIdle: { value: 0.006 },
         uMerge: { value: 1.0 }, uMergeSpeed: { value: 1.4 }, uWarpAmp: { value: 0.02 }, uWarpFreq: { value: 12.0 }, uWarpSpeed: { value: 1.0 },
@@ -86,7 +143,8 @@ class ShapeField {
       },
       vertexShader: `
         attribute vec3 aFinal; attribute vec3 aStart; attribute vec2 aSize; attribute vec3 aColor; attribute float aShape; attribute float aSeed; attribute float aDelay; attribute float aGridDelay; attribute vec2 aNbr;
-        uniform float uTime,uReveal,uAssemble,uRevWindow,uAsmWindow,uStartDot,uArc,uFlowScale,uCloudDrift,uIdle,uMerge,uMergeSpeed,uEase,uRevealEase;
+        uniform float uTime,uReveal,uAssemble,uRevWindow,uAsmWindow,uStartDot,uArc,uFlowScale,uCloudDrift,uIdle,uMerge,uMergeSpeed,uEase,uRevealEase,uFinalScale;
+        uniform vec2 uFinalOffset;
         varying vec2 vUv; varying vec3 vColor; varying float vShape; varying float vAlpha; varying float vRound; varying float vSeed; varying float vDepth;
         float hsh(vec3 p){ return fract(sin(dot(p, vec3(127.1,311.7,74.7)))*43758.5453); }
         float vnoise(vec3 p){ vec3 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
@@ -107,14 +165,18 @@ class ShapeField {
           float paRaw = clamp((uAssemble - aDelay*(1.0-uAsmWindow))/max(uAsmWindow,0.001),0.0,1.0);
           float pa = applyEase(paRaw, uEase);
           float e = pa;
-          vec3 base = mix(aStart, aFinal, e);
+          // only the RESOLVED state is scaled by uFinalScale + shifted by uFinalOffset (to the target
+          // div's center) — the cloud (aStart) stays full-screen and centered on the mount
+          vec3 finalP = aFinal*uFinalScale; finalP.xy += uFinalOffset;
+          vec3 base = mix(aStart, finalP, e);
           float bell = sin(pa*3.14159);
           vec3 arc = noise3(aStart*uFlowScale + aSeed*3.0 + vec3(0.0,0.0,uTime*0.1))*uArc*bell;
-          vec3 drift = noise3(aFinal*1.4 + aSeed*7.0 + vec3(uTime*0.25))*mix(uCloudDrift,uIdle,e);
+          // idle drift (e→1) scales with the final size so small shapes don't jitter hugely
+          vec3 drift = noise3(aFinal*1.4 + aSeed*7.0 + vec3(uTime*0.25))*mix(uCloudDrift,uIdle,e)*mix(1.0,uFinalScale,e);
           vec3 center = base + arc + drift;
           float osc = 0.5+0.5*sin(uTime*uMergeSpeed + aSeed*6.2831);
-          center.xy += aNbr*uMerge*osc*e;
-          vec2 sz = mix(vec2(uStartDot), aSize, e);
+          center.xy += aNbr*uFinalScale*uMerge*osc*e;
+          vec2 sz = mix(vec2(uStartDot), aSize*uFinalScale, e);
           float roundEnd = (aShape<0.5)?1.0:0.18; vRound = mix(1.0, roundEnd, e);
           vUv = uv-0.5;
           vec4 mv = modelViewMatrix*vec4(center,1.0); vDepth=-mv.z;
@@ -144,11 +206,14 @@ class ShapeField {
     const c = this.config, fit = c.fit, frac = (n) => { const h = Math.sin(n * 78.233) * 43758.5453; return h - Math.floor(h); };
     const R = c.cloud.radius, shell = c.cloud.shell; this.mat.uniforms.uStartDot.value = c.start.dot;
     let i = 0;
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity; // resolved-shape bounds (world units, incl. dot size)
     SHAPES.forEach((L, li) => {
       const rgb = new THREE.Color(L.fill), z = Z_LAYER[L.fill.toUpperCase()] ?? (li / Math.max(1, SHAPES.length - 1) - 0.5) * 0.4;
       for (const s of L.pts) {
         if (i >= this.MAX) break;
         const x = s[0], y = s[1], sw = s[2], sh = s[3], sq = s[4];
+        if (x - sw / 2 < minX) minX = x - sw / 2; if (x + sw / 2 > maxX) maxX = x + sw / 2;
+        if (y - sh / 2 < minY) minY = y - sh / 2; if (y + sh / 2 > maxY) maxY = y + sh / 2;
         this.aFinal.array[i*3]=x; this.aFinal.array[i*3+1]=y; this.aFinal.array[i*3+2]=z;
         this.aSize.array[i*2]=sw; this.aSize.array[i*2+1]=sh;
         this.aColor.array[i*3]=rgb.r; this.aColor.array[i*3+1]=rgb.g; this.aColor.array[i*3+2]=rgb.b;
@@ -162,6 +227,8 @@ class ShapeField {
       }
     });
     this.active = i;
+    // natural (unscaled) extent of the resolved shape in world units — used to size it to a target div
+    this._bounds = i ? { w: Math.max(1e-4, maxX - minX), h: Math.max(1e-4, maxY - minY) } : { w: 1, h: 1 };
     const md2 = c.merge.dist**2, F=this.aFinal.array, CO=this.aColor.array, NB=this.aNbr.array;
     for (let a=0;a<i;a++){ const ax=F[a*3], ay=F[a*3+1], cr=CO[a*3], cg=CO[a*3+1], cb=CO[a*3+2]; let bx=0,by=0,bd=1e9;
       for (let b=0;b<i;b++){ if(b===a||Math.abs(CO[b*3]-cr)>0.01||Math.abs(CO[b*3+1]-cg)>0.01||Math.abs(CO[b*3+2]-cb)>0.01) continue; const dx=F[b*3]-ax,dy=F[b*3+1]-ay,dd=dx*dx+dy*dy; if(dd<bd){bd=dd;bx=dx;by=dy;} }
@@ -170,7 +237,7 @@ class ShapeField {
     this.geo.instanceCount = i;
   }
   replay() { this._t0 = this._clock ? this._clock.getElapsedTime() : 0; this._spin = 0; this.mesh.rotation.set(0,0,0); }
-  destroy() { cancelAnimationFrame(this._raf); removeEventListener('resize', this._onResize); this._io && this._io.disconnect(); this.renderer.dispose(); this.renderer.domElement.remove(); }
+  destroy() { this._destroyed = true; cancelAnimationFrame(this._raf); removeEventListener('resize', this._onResize); this._io && this._io.disconnect(); this.renderer.dispose(); this.renderer.domElement.remove(); }
   _loop() {
     this._raf = requestAnimationFrame(this._loop);
     const now = this._clock.getElapsedTime();

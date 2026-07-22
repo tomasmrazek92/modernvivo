@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ModernVivo — DotMap (particle assemble)</title>
+<style>
+  * { box-sizing:border-box; }
+  body { margin:0; background:#f4f2f7; color:#1a1430;
+    font-family:'Inter',system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+  .page { max-width:1200px; margin:0 auto; padding:48px 24px 200px; }
+  header { display:flex; flex-wrap:wrap; align-items:flex-end; justify-content:space-between;
+    gap:16px; padding-bottom:8px; border-bottom:1px solid rgba(0,0,0,.1); margin-bottom:8px; }
+  h1 { font-size:clamp(24px,4vw,40px); margin:0 0 6px; }
+  .sub { color:#5b5478; max-width:64ch; line-height:1.5; font-size:15px; margin:0; }
+  .controls { display:flex; gap:10px; align-items:center; }
+  button { font:inherit; font-size:14px; color:#fff; background:#8D04FD; border:0;
+    padding:10px 18px; border-radius:999px; cursor:pointer; font-weight:600; }
+  .hint { color:#8981a3; font-size:13px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr));
+    gap:28px; margin-top:40px; }
+  .card { background:#fff; border:1px solid rgba(0,0,0,.06); border-radius:16px; padding:20px;
+    box-shadow:0 1px 3px rgba(0,0,0,.05); }
+  .card .art { position:relative; width:100%; display:flex; align-items:center; justify-content:center; }
+  .card svg { width:100%; height:auto; display:block; }
+  .meta { display:flex; justify-content:space-between; align-items:center; margin-top:14px;
+    font-size:12px; color:#5b5478; }
+  .tag { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; color:#8D04FD; }
+  .idx { color:#a49bc4; }
+  .spacer { height:55vh; display:flex; align-items:center; justify-content:center; color:#a49bc4;
+    font-size:14px; }
+</style>
+</head>
+<body data-barba="wrapper"><main data-barba="container">
+  <div class="page">
+    <header>
+      <div>
+        <h1>DotMap</h1>
+        <p class="sub">Particles swarm in and assemble into the artwork (hero-style). The particles are the
+          SVG's own elements — each real dot/rect at its exact position, size, shape & colour — so when they
+          land they ARE the artwork and the handoff to the crisp SVG is seamless. Works with any shape
+          (solid outlines fall back to sampling). Light enough for many per page. Scroll to trigger each.</p>
+      </div>
+      <div class="controls">
+        <span class="hint">8 shapes</span>
+        <button id="replay">Replay all</button>
+      </div>
+    </header>
+    <div class="grid" id="grid"></div>
+  </div>
+</main>
+
+<link rel="stylesheet" href="https://unpkg.com/lenis@1.3.17/dist/lenis.css">
+<script src="https://cdn.jsdelivr.net/npm/@barba/core@2.10.3/dist/barba.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/lenis@1.3.17/dist/lenis.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.15/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.15/dist/ScrollTrigger.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.15/dist/CustomEase.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.15/dist/SplitText.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/matter-js@0.20.0/build/matter.min.js"></script>
+
+<script>
+  // fetch every shape, inject it inline into a [data-dotmap] card, THEN load the bundle so its
+  // once()-init sees the populated hosts.
+  const SHAPES = [
+    { file: 'shapes/shape-01.svg', order: 'radial', ease: 'power3.out' },
+    { file: 'shapes/shape-02.svg', order: 'random', ease: 'power3.out' },
+    { file: 'shapes/shape-03.svg', order: 'scan',   ease: 'power3.out' },
+    { file: 'shapes/shape-04.svg', order: 'radial', ease: 'back.out'  },
+    { file: 'shapes/shape-05.svg', order: 'random', ease: 'power2.out' },
+    { file: 'shapes/shape-06.svg', order: 'radial', ease: 'power3.out' },
+    { file: 'shapes/shape-07.svg', order: 'scan',   ease: 'back.out'  },
+    { file: 'shapes/shape-08.svg', order: 'radial', ease: 'power3.out' },
+  ];
+  (async () => {
+    const grid = document.getElementById('grid');
+    for (let i = 0; i < SHAPES.length; i++) {
+      const s = SHAPES[i];
+      let svg = '';
+      try { svg = await (await fetch(s.file)).text(); } catch (e) { svg = '<p>failed: ' + s.file + '</p>'; }
+      const card = document.createElement('div');
+      card.className = 'card';
+      const opaque = s.file.includes('shape-01') ? ' data-dotmap-opaque="true"' : ''; // shape-01 SVG is a 0.6 group
+      card.innerHTML =
+        `<div class="art" data-dotmap data-dotmap-order="${s.order}" data-dotmap-ease="${s.ease}"${opaque}>${svg}</div>` +
+        `<div class="meta"><span class="tag">${s.file.split('/')[1]} · ${s.order} · ${s.ease}</span><span class="idx">#${i + 1}</span></div>`;
+      grid.appendChild(card);
+    }
+    document.getElementById('replay').addEventListener('click', () => {
+      document.querySelectorAll('[data-dotmap]').forEach((el) => el.__dotmap && el.__dotmap.replay());
+    });
+    const sc = document.createElement('script');
+    sc.defer = true; sc.src = '../dist/index.js';
+    document.body.appendChild(sc);
+  })();
+</script>
+</body>
+</html>

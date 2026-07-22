@@ -7,9 +7,18 @@
 
 import {
   initButton056,
+  initCardBorderHover,
   initContentRevealScroll,
+  initCopyEmail,
+  initCSSMarquee,
+  initDotField,
+  initDotMap,
+  initGlobalParallax,
   initHeadingReveal,
+  initNavMenu,
+  initNavReveal,
   initStackingCardsParallax,
+  initStickyStepsFlip,
 } from './animations.js';
 import { initHero } from './hero.js';
 
@@ -46,12 +55,23 @@ function initOnceFunctions() {
   if (onceFunctionsInitialized) return;
   onceFunctionsInitialized = true;
 
-  // Runs once on first load
+  // Runs once on first load. NOTE: nav + copy-email live in persistent regions (nav/footer) that sit
+  // OUTSIDE the barba container, so their gate must query `document` — `has()` (container-scoped)
+  // would miss them. The inits themselves already scan `document` here.
+  if (document.querySelector('[data-nav-reveal]')) initNavReveal(document); // nav persists across barba — once only
+  if (document.querySelector('[data-nav="hamburger"]')) initNavMenu(document); // nav persists — once only
   if (has('[data-shapefield]')) initHero(document);
+  if (has('[data-dotmap]')) initDotMap(nextPage);
+  if (has('[data-dotfield]')) initDotField(document);
   if (has('[data-button-056]')) initButton056(document);
   if (has('[data-reveal]')) initHeadingReveal(document);
   if (has('[data-reveal-group]')) initContentRevealScroll(document);
   if (has('[data-stacking-cards-item]')) initStackingCardsParallax(document);
+  if (has('[data-sticky-steps-init]')) initStickyStepsFlip(document);
+  if (has('[data-parallax="trigger"]')) initGlobalParallax(document);
+  if (has('[data-card-border]')) initCardBorderHover(document);
+  if (document.querySelector('[data-copy-email]')) initCopyEmail(document); // footer/persistent → document-scoped gate
+  if (document.querySelector('[data-css-marquee]')) initCSSMarquee(document); // marquee may live in footer
 
   // reveals have set their own initial hidden state (inline) — safe to drop the CSS pre-hide gate
   document.documentElement.classList.add('reveal-ready');
@@ -68,20 +88,19 @@ function initAfterEnterFunctions(next) {
 
   // Runs after enter animation completes
   if (has('[data-shapefield]')) initHero(nextPage);
+  if (has('[data-dotmap]')) initDotMap(nextPage);
+  if (has('[data-dotfield]')) initDotField(nextPage);
   if (has('[data-button-056]')) initButton056(nextPage);
   if (has('[data-reveal]')) initHeadingReveal(nextPage);
   if (has('[data-reveal-group]')) initContentRevealScroll(nextPage);
   if (has('[data-stacking-cards-item]')) initStackingCardsParallax(nextPage);
+  if (has('[data-sticky-steps-init]')) initStickyStepsFlip(nextPage);
+  if (has('[data-parallax="trigger"]')) initGlobalParallax(nextPage);
+  if (has('[data-card-border]')) initCardBorderHover(nextPage);
+  if (has('[data-copy-email]')) initCopyEmail(nextPage);
+  if (has('[data-css-marquee]')) initCSSMarquee(nextPage);
 
   document.documentElement.classList.add('reveal-ready');
-
-  if (hasLenis) {
-    lenis.resize();
-  }
-
-  if (hasScrollTrigger) {
-    ScrollTrigger.refresh();
-  }
 }
 
 // -----------------------------------------
@@ -153,20 +172,25 @@ function runPageEnterAnimation(next) {
     'startEnter'
   );
 
-  tl.fromTo(
-    next.querySelector('h1'),
-    {
-      yPercent: 25,
-      autoAlpha: 0,
-    },
-    {
-      yPercent: 0,
-      autoAlpha: 1,
-      ease: 'expo.out',
-      duration: 1,
-    },
-    '< 0.3'
-  );
+  // let a data-reveal heading animate itself — don't double-animate it here (it's hidden + armed
+  // before this fade, so a barba tween on top of it would fight the reveal)
+  const enterH1 = next.querySelector('h1:not([data-reveal])');
+  if (enterH1) {
+    tl.fromTo(
+      enterH1,
+      {
+        yPercent: 25,
+        autoAlpha: 0,
+      },
+      {
+        yPercent: 0,
+        autoAlpha: 1,
+        ease: 'expo.out',
+        duration: 1,
+      },
+      '< 0.3'
+    );
+  }
 
   tl.add('pageReady');
   tl.call(resetPage, [next], 'pageReady');
@@ -180,19 +204,34 @@ function runPageEnterAnimation(next) {
 // BARBA HOOKS + INIT
 // -----------------------------------------
 
-barba.hooks.beforeEnter((data) => {
-  // Position new container on top
-  gsap.set(data.next.container, {
-    position: 'fixed',
-    top: 0,
-    left: 0,
-    right: 0,
-  });
+// Navy backdrop on html + body + barba wrapper — applied ONLY for the duration of a transition (so a
+// navy shows through as page A leaves and before page B is painted), then cleared afterwards.
+function setTransitionBackdrop(on) {
+  const els = [
+    document.documentElement,
+    document.body,
+    document.querySelector('[data-barba="wrapper"]'),
+  ].filter(Boolean);
+  new Set(els).forEach((el) => (el.style.backgroundColor = on ? 'var(--navy)' : ''));
+}
+
+// Runs at the very start of a navigation (nav only — never on first-load `once`, which has no leave).
+barba.hooks.beforeLeave((data) => {
+  // Navy backdrop shows through as page A fades out AND in the gap before page B fades in (the
+  // transition is sequential, not a crossfade — see sync:false). Cleared again in afterEnter.
+  setTransitionBackdrop(true);
+
+  // Stack + hide the incoming page up front so it never shows under the leaving page.
+  if (data.next && data.next.container) {
+    gsap.set(data.next.container, { position: 'fixed', top: 0, left: 0, right: 0, autoAlpha: 0 });
+  }
 
   if (lenis && typeof lenis.stop === 'function') {
     lenis.stop();
   }
+});
 
+barba.hooks.beforeEnter((data) => {
   initBeforeEnterFunctions(data.next.container);
   applyThemeFrom(data.next.container);
 });
@@ -207,11 +246,12 @@ barba.hooks.enter((data) => {
   initBarbaNavUpdate(data);
 });
 
-barba.hooks.afterEnter((data) => {
-  // Run page functions
-  initAfterEnterFunctions(data.next.container);
+barba.hooks.afterEnter(() => {
+  // Page B is fully in now — drop the navy backdrop so the pages' own backgrounds show again.
+  setTransitionBackdrop(false);
 
-  // Settle
+  // Page functions (reveal hidden-states + arming) already ran in `enter`, BEFORE the fade, so
+  // nothing flashed. Now the container is in its final flow position — just settle scroll + triggers.
   if (hasLenis) {
     lenis.resize();
     lenis.start();
@@ -229,7 +269,7 @@ barba.init({
   transitions: [
     {
       name: 'default',
-      sync: true,
+      sync: false, // sequential: page A fully leaves (navy shows) THEN page B enters — no crossfade
 
       // First load
       async once(data) {
@@ -245,6 +285,10 @@ barba.init({
 
       // New page enters
       async enter(data) {
+        // Prepare page-B (set reveal hidden-states + arm reveals) BEFORE the fade-in, so its content
+        // never flashes un-animated. `enter` only runs on navigation, so this never double-runs the
+        // first-load `once` path.
+        initAfterEnterFunctions(data.next.container);
         return runPageEnterAnimation(data.next.container);
       },
     },
