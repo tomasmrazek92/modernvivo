@@ -371,6 +371,313 @@ export function initDotMap(scope = document) {
   });
 }
 
+// Industry-hero reveal — a two-beat sequence on scroll-into-view (or on load if already in view):
+//   1) the line GRID draws on, each segment strokeDashoffset-drawn with a directional stagger, then
+//   2) the blocky MAP reveals per-cell with a hero-like motion (default converge / swarm→shape).
+// Markup: a wrapper with the two inline SVGs inside.
+//   [data-industry-reveal]                 — the wrapper (required)
+//   grid svg  → [data-industry-grid]  or the .hero-industry-bg-grid class (auto-detected)
+//   map  svg  → [data-industry-map]   or the .hero-industry-bg-shape class (auto-detected)
+// GRID (draw speed / feel):
+//   data-industry-grid-duration            — stagger span in seconds (default 2.4; higher = slower cascade)
+//   data-industry-grid-draw                — per-segment draw seconds (default 1.1; higher = slower lines)
+//   data-industry-grid-dir                 — order: tl-br (def)|br-tl|tr-bl|bl-tr|ltr|ttb
+//   data-industry-grid-ease                — draw ease (default power1.inOut)
+//   data-industry-gap                      — extra seconds between the two beats (default 0.2; negative
+//                                            overlaps so the map starts before the grid finishes)
+// MAP (reveal):
+//   data-industry-map-mode                 — converge (def) | radial | rise | render | dotmap
+//   data-industry-map-duration             — stagger span in seconds (default 1.6)
+//   data-industry-map-cell                 — per-cell motion seconds (default 0.6)
+//   data-industry-map-order                — center (def) | edges | random | tl-br | br-tl | ltr | ttb
+//   data-industry-map-ease                 — per-cell ease (default power3.out; try back.out(1.4) for pop)
+//   data-industry-map-distance             — fly-in / rise distance in svg units (default 40)
+//   data-industry-map-scale                — start scale for converge/radial (default 0.35)
+//   in "dotmap" map-mode the map svg reads the usual data-dotmap-* attrs.
+const IR_NS = 'http://www.w3.org/2000/svg';
+
+// Split each <path> into one <path> per subpath (each square/dot, or each grid line run, is an "M…"
+// subpath), so the baked multi-shape paths become individually animatable. Presentation attrs (fill AND
+// stroke) are copied to each piece, so this works for the filled map and the stroked grid alike.
+const IR_COPY_ATTRS = [
+  'fill',
+  'stroke',
+  'stroke-width',
+  'stroke-linecap',
+  'stroke-linejoin',
+  'opacity',
+  'fill-opacity',
+  'stroke-opacity',
+];
+function splitSvgShapes(svg) {
+  const out = [];
+  Array.from(svg.querySelectorAll('path')).forEach((p) => {
+    const d = p.getAttribute('d') || '';
+    const subs = d.match(/[Mm][^Mm]*/g) || [];
+    if (subs.length <= 1) {
+      out.push(p);
+      return;
+    }
+    const frag = document.createDocumentFragment();
+    subs.forEach((sd) => {
+      const np = document.createElementNS(IR_NS, 'path');
+      np.setAttribute('d', sd.trim());
+      IR_COPY_ATTRS.forEach((a) => {
+        const v = p.getAttribute(a);
+        if (v != null) np.setAttribute(a, v);
+      });
+      frag.appendChild(np);
+      out.push(np);
+    });
+    p.replaceWith(frag);
+  });
+  return out;
+}
+
+// Staggered line-draw: split the grid into segments and draw each on (strokeDashoffset), ordered along
+// a direction so lines cascade across the grid instead of all fading at once.
+function buildStrokeDraw(segs, opts) {
+  const tl = gsap.timeline({ paused: true });
+  const metric = (x, y) => {
+    switch (opts.dir) {
+      case 'br-tl':
+        return -(x + y);
+      case 'tr-bl':
+        return -x + y;
+      case 'bl-tr':
+        return x - y;
+      case 'ltr':
+        return x;
+      case 'ttb':
+        return y;
+      default:
+        return x + y; // tl-br
+    }
+  };
+  const info = segs.map((s) => {
+    let len = 0;
+    let cx = 0;
+    let cy = 0;
+    try {
+      len = s.getTotalLength();
+    } catch (e) {
+      /* non-rendered */
+    }
+    try {
+      const b = s.getBBox();
+      cx = b.x + b.width / 2;
+      cy = b.y + b.height / 2;
+    } catch (e) {
+      /* detached */
+    }
+    return { s, len, m: metric(cx, cy) };
+  });
+  const ms = info.map((o) => o.m);
+  const min = Math.min.apply(null, ms);
+  const max = Math.max.apply(null, ms);
+  const range = Math.max(1, max - min);
+  info.forEach((o) => {
+    if (!o.len) return; // no length → nothing to draw; leave it at its inherited CSS opacity
+    const at = ((o.m - min) / range) * opts.duration; // staggered start along the sweep
+    // hide via the dash only — never opacity, so the grid's CSS opacity (its faded look) is kept
+    gsap.set(o.s, { strokeDasharray: o.len, strokeDashoffset: o.len });
+    tl.to(o.s, { strokeDashoffset: 0, duration: opts.drawDur, ease: opts.ease || 'power1.inOut' }, at);
+  });
+  return tl;
+}
+
+function irViewBox(svg) {
+  const b = svg.viewBox && svg.viewBox.baseVal;
+  if (b && b.width) return b;
+  return {
+    x: 0,
+    y: 0,
+    width: parseFloat(svg.getAttribute('width')) || 100,
+    height: parseFloat(svg.getAttribute('height')) || 100,
+  };
+}
+
+// Map reveal — several "cool" per-cell modes tuned to feel like the homepage ShapeField (particles
+// converging into form), not the flat DotMap secondary maps:
+//   converge — each cell flies in from a scattered offset + scales up + fades (swarm → shape). Default.
+//   radial   — each cell scales up from 0 + fades, ordered center-out (the shape blooms outward).
+//   rise     — each cell rises from below + fades.
+//   render   — plain per-cell fade (the old flat look), kept as an option.
+// `order` sets the stagger order; `mode` sets the per-cell motion. cell = per-cell duration.
+function buildMapReveal(svg, shapes, opts) {
+  const tl = gsap.timeline({ paused: true });
+  const vb = irViewBox(svg);
+  const midX = vb.x + vb.width / 2;
+  const midY = vb.y + vb.height / 2;
+
+  const cells = shapes.map((s) => {
+    let cx = midX;
+    let cy = midY;
+    try {
+      const b = s.getBBox();
+      cx = b.x + b.width / 2;
+      cy = b.y + b.height / 2;
+    } catch (e) {
+      /* detached */
+    }
+    return { s, cx, cy, rand: Math.random() };
+  });
+
+  const orderVal = (c) => {
+    switch (opts.order) {
+      case 'center':
+        return Math.hypot(c.cx - midX, c.cy - midY); // center → out
+      case 'edges':
+        return -Math.hypot(c.cx - midX, c.cy - midY); // edges → in
+      case 'random':
+        return c.rand;
+      case 'ttb':
+        return c.cy;
+      case 'ltr':
+        return c.cx;
+      case 'br-tl':
+        return -(c.cx + c.cy);
+      default:
+        return c.cx + c.cy; // tl-br
+    }
+  };
+  const os = cells.map(orderVal);
+  const min = Math.min.apply(null, os);
+  const max = Math.max.apply(null, os);
+  const range = Math.max(1, max - min);
+
+  cells.forEach((c) => {
+    const at = ((orderVal(c) - min) / range) * opts.duration;
+    const from = { opacity: 0, transformOrigin: '50% 50%' };
+    const to = { opacity: 1, duration: opts.cell, ease: opts.ease };
+
+    if (opts.mode === 'converge') {
+      const ang = c.rand * Math.PI * 2;
+      const dist = opts.distance * (0.5 + c.rand);
+      from.x = Math.cos(ang) * dist;
+      from.y = Math.sin(ang) * dist;
+      from.scale = opts.scale;
+      to.x = 0;
+      to.y = 0;
+      to.scale = 1;
+    } else if (opts.mode === 'radial') {
+      from.scale = opts.scale;
+      to.scale = 1;
+    } else if (opts.mode === 'rise') {
+      from.y = opts.distance;
+      to.y = 0;
+    } // 'render' → opacity only
+
+    gsap.set(c.s, from);
+    tl.to(c.s, to, at);
+  });
+  return tl;
+}
+
+export function initIndustryReveal(scope = document) {
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  scope.querySelectorAll('[data-industry-reveal]').forEach((wrap) => {
+    if (wrap.__industryReveal) return; // guard barba re-init
+    wrap.__industryReveal = true;
+
+    const gridSvg = wrap.querySelector('[data-industry-grid], .hero-industry-bg-grid');
+    const mapSvg = wrap.querySelector('[data-industry-map], .hero-industry-bg-shape');
+    if (!gridSvg && !mapSvg) return;
+
+    const gridStagger = parseFloat(wrap.getAttribute('data-industry-grid-duration')) || 2.4; // stagger span
+    const gridDraw = parseFloat(wrap.getAttribute('data-industry-grid-draw')) || 1.1; // per-segment draw
+    const gridDir = wrap.getAttribute('data-industry-grid-dir') || 'tl-br';
+    const gapAttr = wrap.getAttribute('data-industry-gap');
+    const gap = gapAttr !== null ? parseFloat(gapAttr) : 0.2;
+
+    // hide both until their beat via VISIBILITY only (never opacity) so any CSS opacity on the svgs
+    // (e.g. the grid's faded look) is preserved — the draw/render animate dash / cell opacity, not the svg.
+    if (gridSvg) gsap.set(gridSvg, { visibility: 'hidden' });
+    if (mapSvg) gsap.set(mapSvg, { visibility: 'hidden' });
+
+    // Beat 1 — the grid DRAWS ON: split into segments, each strokeDashoffset-draws, staggered along dir.
+    // Returns the timeline so the map can start when the grid actually finishes.
+    const runGrid = () => {
+      if (!gridSvg) return null;
+      if (reduced) {
+        gsap.set(gridSvg, { visibility: 'visible' });
+        return null;
+      }
+      try {
+        const segs = splitSvgShapes(gridSvg);
+        const tl = buildStrokeDraw(segs, {
+          duration: gridStagger,
+          drawDur: gridDraw,
+          dir: gridDir,
+          ease: wrap.getAttribute('data-industry-grid-ease') || 'power1.inOut',
+        });
+        gsap.set(gridSvg, { visibility: 'visible' });
+        tl.play(0);
+        return tl;
+      } catch (e) {
+        gsap.set(gridSvg, { visibility: 'visible' });
+        return null;
+      }
+    };
+
+    // Beat 2 — the map REVEALS with a hero-like per-cell motion (default: converge / swarm→shape).
+    const mapMode = wrap.getAttribute('data-industry-map-mode') || 'converge';
+    const runMap = () => {
+      if (!mapSvg) return;
+      if (reduced) {
+        gsap.set(mapSvg, { visibility: 'visible' });
+        return;
+      }
+      if (mapMode === 'dotmap') {
+        try {
+          gsap.set(mapSvg, { visibility: 'visible' });
+          wrap.__industryMap = new DotMap(mapSvg); // fall back to the secondary-map particle-assemble
+        } catch (e) {
+          gsap.set(mapSvg, { visibility: 'visible' });
+        }
+        return;
+      }
+      try {
+        const shapes = splitSvgShapes(mapSvg);
+        const tl = buildMapReveal(mapSvg, shapes, {
+          mode: mapMode, // converge (def) | radial | rise | render
+          duration: parseFloat(wrap.getAttribute('data-industry-map-duration')) || 1.6, // stagger span
+          cell: parseFloat(wrap.getAttribute('data-industry-map-cell')) || 0.6, // per-cell duration
+          order: wrap.getAttribute('data-industry-map-order') || 'center',
+          ease: wrap.getAttribute('data-industry-map-ease') || 'power3.out',
+          distance: parseFloat(wrap.getAttribute('data-industry-map-distance')) || 40, // fly-in / rise (svg units)
+          scale: parseFloat(wrap.getAttribute('data-industry-map-scale')) || 0.35, // start scale (converge/radial)
+        });
+        gsap.set(mapSvg, { visibility: 'visible' }); // cells are individually hidden (opacity 0), no flash
+        tl.play(0);
+      } catch (e) {
+        gsap.set(mapSvg, { visibility: 'visible' }); // never leave the map invisible on failure
+      }
+    };
+
+    const play = () => {
+      if (reduced) {
+        runGrid();
+        runMap();
+        return;
+      }
+      const gridTL = runGrid();
+      const gridTotal = gridTL ? gridTL.duration() : 0;
+      gsap.delayedCall(Math.max(0, gridTotal + gap), runMap); // grid draws on, then the map renders
+    };
+
+    // Play on load if already in view (hero above the fold), else on scroll-into-view. A ScrollTrigger
+    // whose start is already passed at creation won't fire onEnter, hence the in-view check.
+    const r = wrap.getBoundingClientRect();
+    if (r.top < window.innerHeight * 0.9 && r.bottom > 0) {
+      play();
+    } else {
+      ScrollTrigger.create({ trigger: wrap, start: 'top 80%', once: true, onEnter: play });
+    }
+  });
+}
+
 export function initDotField(scope = document) {
   const mount = scope.querySelector('[data-dotfield]');
   if (!mount || mount.__dotfield) return; // nothing to do / already mounted
@@ -390,43 +697,57 @@ export function initDotField(scope = document) {
   return mount.__dotfield;
 }
 
-// Stacking cards — as each card scrolls up, the previous one drifts + its image rotates (parallax)
+// Stacking cards — as each card scrolls up, the previous one drifts + its image rotates (parallax).
+// Desktop-only: the effect is registered inside a gsap.matchMedia '(min-width:992px)', so below 992px
+// no ScrollTriggers are created and the cards sit static. The module-level mm is reverted on re-init so
+// its triggers don't accumulate across barba navs (same pattern as initGlobalParallax).
+let stackingMM = null;
 export function initStackingCardsParallax(scope = document) {
-  const cards = scope.querySelectorAll('[data-stacking-cards-item]');
+  if (stackingMM) stackingMM.revert(); // clean up the prior page's instance (barba re-init)
+  const mm = gsap.matchMedia();
+  stackingMM = mm;
 
-  if (cards.length < 2) return;
+  mm.add('(min-width:992px)', () => {
+    const cards = scope.querySelectorAll('[data-stacking-cards-item]');
 
-  cards.forEach((card, i) => {
-    // Skip over the first section
-    if (i === 0) return;
+    if (cards.length < 2) return;
 
-    // When current section is in view, target the PREVIOUS one
-    const previousCard = cards[i - 1];
-    if (!previousCard) return;
+    const ctx = gsap.context(() => {
+      cards.forEach((card, i) => {
+        // Skip over the first section
+        if (i === 0) return;
 
-    // Find any element inside the previous card
-    const previousCardImage = previousCard.querySelector('[data-stacking-cards-img]');
+        // When current section is in view, target the PREVIOUS one
+        const previousCard = cards[i - 1];
+        if (!previousCard) return;
 
-    let tl = gsap.timeline({
-      defaults: {
-        ease: 'none',
-        duration: 1,
-      },
-      scrollTrigger: {
-        trigger: card,
-        start: 'top bottom',
-        end: 'top top',
-        scrub: true,
-        invalidateOnRefresh: true,
-      },
-    });
+        // Find any element inside the previous card
+        const previousCardImage = previousCard.querySelector('[data-stacking-cards-img]');
 
-    tl.fromTo(previousCard, { yPercent: 0 }, { yPercent: 50 }).fromTo(
-      previousCardImage,
-      { rotate: 0, yPercent: 0 },
-      { rotate: -5, yPercent: -25 },
-      '<'
-    );
+        let tl = gsap.timeline({
+          defaults: {
+            ease: 'none',
+            duration: 1,
+          },
+          scrollTrigger: {
+            trigger: card,
+            start: 'top bottom',
+            end: 'top top',
+            scrub: true,
+            invalidateOnRefresh: true,
+          },
+        });
+
+        tl.fromTo(previousCard, { yPercent: 0 }, { yPercent: 50 }).fromTo(
+          previousCardImage,
+          { rotate: 0, yPercent: 0 },
+          { rotate: -5, yPercent: -25 },
+          '<'
+        );
+      });
+    }, scope);
+
+    return () => ctx.revert(); // clears the yPercent/rotate transforms when dropping below 992px
   });
 }
 
@@ -573,8 +894,96 @@ export function initContentRevealScroll(scope = document) {
 //   [data-sticky-steps-anchor]   — the scroll trigger for that step (the text column)
 // Behaviour: each step = a single half-flip — skip several steps fast and it's ONE flip to the
 // final card. Reveal order is top→bottom via getBBox().y, independent of the SVG's element order.
+// Prior pages' matchMedia instances are reverted on re-init (barba) so their ScrollTriggers / pins /
+// DOM restores don't accumulate across navigations.
+let stickyStepsMMs = [];
 export function initStickyStepsFlip(scope = document) {
+  stickyStepsMMs.forEach((mm) => mm.revert());
+  stickyStepsMMs = [];
   scope.querySelectorAll('[data-sticky-steps-init]').forEach(setupStickySteps);
+}
+
+// Dispatcher: desktop (≥992px) = the pinned flip that consolidates every card into one flip card;
+// mobile (<992px) = leave each item's own .sticky-steps__visual in place and reveal it on scroll.
+// gsap.matchMedia swaps between them on resize. The desktop path MUTATES the DOM (strips media, injects
+// the flip), so we snapshot the pristine markup once and restore it on teardown — that way crossing the
+// breakpoint (either direction) rebuilds from clean source instead of from the other mode's leftovers.
+function setupStickySteps(container) {
+  const items = container.querySelectorAll('[data-sticky-steps-item]');
+  if (items.length < 2) return;
+  if (!container.__ssOriginalHTML) container.__ssOriginalHTML = container.innerHTML;
+
+  const mm = gsap.matchMedia();
+  stickyStepsMMs.push(mm);
+
+  mm.add('(min-width:992px)', () => {
+    setupStickyStepsDesktop(container);
+    return () => {
+      container.innerHTML = container.__ssOriginalHTML; // restore pristine DOM for the other breakpoint
+    };
+  });
+
+  mm.add('(max-width:991px)', () => {
+    const cleanup = setupStickyStepsMobile(container);
+    return () => {
+      if (cleanup) cleanup(); // destroy the per-item DotMaps before the DOM is blown away
+      container.innerHTML = container.__ssOriginalHTML;
+    };
+  });
+}
+
+// Mobile (<992px): no flip, no pin. Each [data-sticky-steps-item] keeps its own .sticky-steps__visual
+// (its correct step visual). Two reveals per item on scroll-into-view, matching desktop: the dot-grid
+// background assembles (DotMap) and the card svg plays the staggered leaf reveal. The shared multi-grid
+// .sticky-steps_bg-wrap stacks every step's grid in one item (a desktop construct), so we read its
+// shapes, hide the original, and drop ONE grid behind each item instead.
+// Contract: the item visuals must be visible (not display:none) on mobile in the Webflow styles.
+// Returns a cleanup that destroys the per-item DotMaps (called before the DOM is restored on teardown).
+function setupStickyStepsMobile(container) {
+  const bgWrap = container.querySelector('.sticky-steps_bg-wrap');
+  const bgShapes = bgWrap ? Array.from(bgWrap.querySelectorAll('svg')).map((s) => s.outerHTML) : [];
+  if (bgWrap) bgWrap.style.display = 'none';
+
+  const dms = [];
+  Array.from(container.querySelectorAll('[data-sticky-steps-item]')).forEach((item, i) => {
+    const visual = item.querySelector('.sticky-steps__visual');
+    if (!visual) return;
+
+    // per-item dot-grid behind the card — same DotMap assemble as desktop, one shape per step
+    const shape = bgShapes.length ? bgShapes[Math.min(i, bgShapes.length - 1)] : null;
+    if (shape) {
+      if (getComputedStyle(visual).position === 'static') visual.style.position = 'relative';
+      const bg = document.createElement('div');
+      bg.className = 'sticky-steps_bg-wrap sticky-steps_bg-wrap--mobile';
+      bg.style.cssText = 'position:absolute;inset:0;z-index:0;pointer-events:none;';
+      bg.innerHTML = shape;
+      visual.insertBefore(bg, visual.firstChild);
+      try {
+        dms.push(new DotMap(bg)); // below the fold → pending, assembles when scrolled into view
+      } catch (e) {
+        const s = bg.querySelector('svg');
+        if (s) gsap.set(s, { autoAlpha: 1 }); // never leave the grid invisible on failure
+      }
+    }
+
+    // the card svg reveals on top of its grid (keep it above the z:0 bg layer)
+    const cardSvg = Array.from(visual.querySelectorAll('svg')).find(
+      (s) => !s.closest('.sticky-steps_bg-wrap')
+    );
+    if (!cardSvg) return;
+    cardSvg.style.position = 'relative';
+    cardSvg.style.zIndex = '1';
+
+    const tl = buildStickyReveal(cardSvg); // paused → the card sits hidden until scrolled into view
+    ScrollTrigger.create({
+      trigger: visual,
+      start: 'top 80%',
+      once: true,
+      onEnter: () => tl.play(),
+    });
+  });
+
+  return () => dms.forEach((dm) => dm && dm.destroy && dm.destroy());
 }
 
 // flip-only CSS, added once (everything else stays your Webflow styles)
@@ -583,19 +992,28 @@ function injectStickyStepsCSS() {
   const s = document.createElement('style');
   s.id = 'sticky-steps-flip-css';
   s.textContent =
-    // perspective + center the flip in the visual; card = 80% of the visual's height,
-    // width auto via the card's aspect ratio. No stretch — relies on the visual's own height.
+    // Desktop-only (the flip is desktop-only): perspective + center the flip in the visual; card = 80%
+    // of the visual's height, width auto via the card's aspect ratio. Scoped so it never touches the
+    // mobile per-item visuals after a resize across the breakpoint.
+    '@media (min-width:992px){' +
     '.sticky-steps__visual{position:relative;perspective:1800px;display:flex;align-items:center;justify-content:center}' +
     '.ss-flip{position:relative;height:80%;width:auto;aspect-ratio:362 / 502;transform-style:preserve-3d;will-change:transform}' +
     '.ss-flip__face{position:absolute;inset:0;backface-visibility:hidden;-webkit-backface-visibility:hidden}' +
     '.ss-flip__face--back{transform:rotateY(180deg)}' +
-    '.ss-flip__face svg{display:block;width:100%;height:100%}';
+    '.ss-flip__face svg{display:block;width:100%;height:100%}' +
+    '}';
   document.head.appendChild(s);
 }
 
 // Reveal one card face: leaf paint elements, staggered top→bottom.
 function buildStickyReveal(face) {
-  const svg = face.querySelector('svg');
+  // `face` is a face div (desktop flip) or an <svg> directly (mobile). Pick the card svg, skipping any
+  // bg-wrap grid svgs that may share the visual.
+  const svg =
+    face.tagName && face.tagName.toLowerCase() === 'svg'
+      ? face
+      : Array.from(face.querySelectorAll('svg')).find((s) => !s.closest('.sticky-steps_bg-wrap')) ||
+        face.querySelector('svg');
   const tl = gsap.timeline({ paused: true, defaults: { ease: 'power3.out' } });
   if (!svg) return tl;
 
@@ -661,8 +1079,7 @@ function buildStickyReveal(face) {
   return tl;
 }
 
-function setupStickySteps(container) {
-  if (container.hasAttribute('data-flip-ready')) return; // already wired (guards double-init)
+function setupStickyStepsDesktop(container) {
   const items = Array.from(container.querySelectorAll('[data-sticky-steps-item]'));
   if (items.length < 2) return;
 
@@ -674,7 +1091,6 @@ function setupStickySteps(container) {
   if (cards.some((c) => !c)) return; // an item is missing its inline SVG → skip silently
 
   injectStickyStepsCSS();
-  container.setAttribute('data-flip-ready', '');
 
   // one flip card in the first item's media (spans the collection → stays pinned); strip the rest
   const firstVisual = items[0].querySelector('.sticky-steps__visual');
@@ -807,12 +1223,38 @@ function setupStickySteps(container) {
     startFlip(index);
   }
 
-  // init: front = card 0 (revealed), back = card 1 (ready)
+  // init: front = card 0, back = card 1 (ready)
   const [firstCard, secondCard] = cards;
   front.innerHTML = firstCard;
   back.innerHTML = secondCard;
-  buildStickyReveal(front).play();
   setStatus(0);
+  // Seed the step-0 background so it ALSO assembles on scroll-in — not just on the first step change.
+  // Item 0's ScrollTrigger onEnter doesn't fire if its start is already passed when the trigger is
+  // created (post-refresh), so revealBg(0) would otherwise never run until you scroll to step 1 and
+  // back. DotMap handles the timing itself: below the fold it registers pending and assembles when the
+  // section scrolls into view; already in view → assembles now. Dedups with item 0's onEnter via bgIndex.
+  revealBg(0);
+
+  // Card 0's content reveal plays on scroll-into-view — same staggered reveal every other step gets at
+  // its flip — instead of firing instantly at init. buildStickyReveal returns a PAUSED timeline whose
+  // fromTo tweens render their hidden "from" state immediately, so the card sits hidden until then.
+  // Uses item 0's anchor at the same 'center 60%' as the step triggers; if we loaded already scrolled
+  // into/past the section (a passed ScrollTrigger won't fire onEnter), reveal it now.
+  const frontTL = buildStickyReveal(front);
+  let frontPlayed = false;
+  const playFront = () => {
+    if (frontPlayed) return;
+    frontPlayed = true;
+    frontTL.play();
+  };
+  const firstAnchor = items[0].querySelector('[data-sticky-steps-anchor]');
+  const revealTrigger = firstAnchor || firstVisual;
+  const rr = revealTrigger.getBoundingClientRect();
+  if (rr.top + rr.height / 2 < window.innerHeight * 0.6) {
+    playFront();
+  } else {
+    ScrollTrigger.create({ trigger: revealTrigger, start: 'center 60%', once: true, onEnter: playFront });
+  }
 
   items.forEach((item, index) => {
     const anchor = item.querySelector('[data-sticky-steps-anchor]');
@@ -834,6 +1276,7 @@ function setupStickySteps(container) {
 //   data-parallax-direction             — "horizontal" | "vertical" (default vertical → yPercent)
 //   data-parallax-scrub                 — "true" (default) or a number = seconds to catch up
 //   data-parallax-start / -end          — start/end position in % (defaults 20 / -20)
+//   data-parallax-rotate                — degrees of slow tilt across the scroll (e.g. "8"); 0 = off
 //   data-parallax-scroll-start / -end   — ScrollTrigger start/end (defaults "top bottom" / "bottom top")
 //   data-parallax-disable               — "mobile" | "mobileLandscape" | "tablet" (skip below that bp)
 // Osmo's tween logic is kept verbatim; only adapted for the boilerplate: query is scoped to the
@@ -874,9 +1317,17 @@ export function initGlobalParallax(scope = document) {
           const direction = trigger.getAttribute('data-parallax-direction') || 'vertical';
           const prop = direction === 'horizontal' ? 'xPercent' : 'yPercent';
 
-          // Get the scrub value, our default is 'true' because that feels nice with Lenis
+          // Get the scrub value, our default is 'true' because that feels nice with Lenis.
+          // Accept: absent / "true" → true, "false" → false, a number → catch-up seconds.
+          // (parseFloat("true") is NaN, which GSAP reads as no-scrub — so a literal "true" must be handled.)
           const scrubAttr = trigger.getAttribute('data-parallax-scrub');
-          const scrub = scrubAttr ? parseFloat(scrubAttr) : true;
+          let scrub;
+          if (scrubAttr === null || scrubAttr === 'true') scrub = true;
+          else if (scrubAttr === 'false') scrub = false;
+          else {
+            const n = parseFloat(scrubAttr);
+            scrub = isNaN(n) ? true : n;
+          }
 
           // Get the start position in %
           const startAttr = trigger.getAttribute('data-parallax-start');
@@ -894,20 +1345,28 @@ export function initGlobalParallax(scope = document) {
           const scrollEndRaw = trigger.getAttribute('data-parallax-scroll-end') || 'bottom top';
           const scrollEnd = `clamp(${scrollEndRaw})`;
 
-          gsap.fromTo(
-            target,
-            { [prop]: startVal },
-            {
-              [prop]: endVal,
-              ease: 'none',
-              scrollTrigger: {
-                trigger,
-                start: scrollStart,
-                end: scrollEnd,
-                scrub,
-              },
-            }
-          );
+          // Optional slow rotation across the same scroll span. data-parallax-rotate="8" (degrees)
+          // tilts from +rot/2 through 0 to -rot/2, so the resting mid-scroll state is un-rotated.
+          const rotateAttr = trigger.getAttribute('data-parallax-rotate');
+          const rot = rotateAttr !== null ? parseFloat(rotateAttr) : 0;
+
+          const fromVars = { [prop]: startVal };
+          const toVars = {
+            [prop]: endVal,
+            ease: 'none',
+            scrollTrigger: {
+              trigger,
+              start: scrollStart,
+              end: scrollEnd,
+              scrub,
+            },
+          };
+          if (rot) {
+            fromVars.rotation = rot / 2;
+            toVars.rotation = -rot / 2;
+          }
+
+          gsap.fromTo(target, fromVars, toVars);
         });
       }, scope);
 

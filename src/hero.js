@@ -40,6 +40,35 @@ export function initHero(scope = document) {
   if (finalFit) cfg.finalFit = finalFit;
   if (mount.getAttribute('data-shapefield-center') === 'false') cfg.finalCenter = false;
 
+  // Play the intro at most once per session, and only when the hero is actually in view on load —
+  // like a ScrollTrigger that's already been passed. Either condition → skip straight to the resolved
+  // shape (ShapeField reads cfg.skipAnimation). `data-shapefield-always` opts a page out of the guard.
+  const alwaysPlay = mount.getAttribute('data-shapefield-always') === 'true';
+  if (!alwaysPlay) {
+    let played = false;
+    try {
+      played = sessionStorage.getItem('mv:heroPlayed') === '1';
+    } catch (e) {
+      /* sessionStorage blocked (private mode) — treat as not played */
+    }
+
+    // Loaded past the hero: its bottom is above the middle of the viewport, so the intro would play
+    // off-screen. Skip it (matches how a passed ScrollTrigger doesn't fire on load).
+    const r = mount.getBoundingClientRect();
+    const scrolledPast = r.bottom < window.innerHeight * 0.5;
+
+    if (played || scrolledPast) {
+      cfg.skipAnimation = true;
+    } else {
+      // We're about to play it for real — mark the session so reloads / barba navs skip.
+      try {
+        sessionStorage.setItem('mv:heroPlayed', '1');
+      } catch (e) {
+        /* ignore */
+      }
+    }
+  }
+
   mount.__shapefield = new ShapeField(mount, cfg);
   return mount.__shapefield;
 }

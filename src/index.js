@@ -15,11 +15,13 @@ import {
   initDotMap,
   initGlobalParallax,
   initHeadingReveal,
+  initIndustryReveal,
   initNavMenu,
   initNavReveal,
   initStackingCardsParallax,
   initStickyStepsFlip,
 } from './animations.js';
+import { initResourcesFilter } from './filters.js';
 import { initHero } from './hero.js';
 
 gsap.registerPlugin(CustomEase, ScrollTrigger, SplitText);
@@ -62,6 +64,7 @@ function initOnceFunctions() {
   if (document.querySelector('[data-nav="hamburger"]')) initNavMenu(document); // nav persists — once only
   if (has('[data-shapefield]')) initHero(document);
   if (has('[data-dotmap]')) initDotMap(nextPage);
+  if (has('[data-industry-reveal]')) initIndustryReveal(document);
   if (has('[data-dotfield]')) initDotField(document);
   if (has('[data-button-056]')) initButton056(document);
   if (has('[data-reveal]')) initHeadingReveal(document);
@@ -70,11 +73,16 @@ function initOnceFunctions() {
   if (has('[data-sticky-steps-init]')) initStickyStepsFlip(document);
   if (has('[data-parallax="trigger"]')) initGlobalParallax(document);
   if (has('[data-card-border]')) initCardBorderHover(document);
+  if (has('.resources-filter')) initResourcesFilter(nextPage);
   if (document.querySelector('[data-copy-email]')) initCopyEmail(document); // footer/persistent → document-scoped gate
   if (document.querySelector('[data-css-marquee]')) initCSSMarquee(document); // marquee may live in footer
 
   // reveals have set their own initial hidden state (inline) — safe to drop the CSS pre-hide gate
   document.documentElement.classList.add('reveal-ready');
+  // ...and the whole-page anti-flash gate: the head CSS hid <body> until now (so the raw pre-JS DOM
+  // never flashed); reveals are hidden/armed, so it's safe to fade the page in. First-load only —
+  // barba navs keep .page-ready and fade the incoming container instead. See the head CSS snippet.
+  document.documentElement.classList.add('page-ready');
 }
 
 function initBeforeEnterFunctions(next) {
@@ -89,6 +97,7 @@ function initAfterEnterFunctions(next) {
   // Runs after enter animation completes
   if (has('[data-shapefield]')) initHero(nextPage);
   if (has('[data-dotmap]')) initDotMap(nextPage);
+  if (has('[data-industry-reveal]')) initIndustryReveal(nextPage);
   if (has('[data-dotfield]')) initDotField(nextPage);
   if (has('[data-button-056]')) initButton056(nextPage);
   if (has('[data-reveal]')) initHeadingReveal(nextPage);
@@ -97,6 +106,7 @@ function initAfterEnterFunctions(next) {
   if (has('[data-sticky-steps-init]')) initStickyStepsFlip(nextPage);
   if (has('[data-parallax="trigger"]')) initGlobalParallax(nextPage);
   if (has('[data-card-border]')) initCardBorderHover(nextPage);
+  if (has('.resources-filter')) initResourcesFilter(nextPage);
   if (has('[data-copy-email]')) initCopyEmail(nextPage);
   if (has('[data-css-marquee]')) initCSSMarquee(nextPage);
 

@@ -427,6 +427,7 @@
       this.svg = host.matches("svg") ? host : host.querySelector("svg");
       if (!this.svg)
         return;
+      this.mount = host.matches("svg") ? this.svg.parentNode : host;
       this.reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
       if (this.reduced)
         return;
@@ -578,7 +579,7 @@
       });
     }
     _build() {
-      const hostRect = this.host.getBoundingClientRect();
+      const hostRect = this.mount.getBoundingClientRect();
       const sRect = this.svg.getBoundingClientRect();
       const cw = sRect.width, ch = sRect.height;
       this.map = { cw, ch };
@@ -587,9 +588,9 @@
       cvs.width = Math.round(cw * this.dpr);
       cvs.height = Math.round(ch * this.dpr);
       cvs.style.cssText = `position:absolute;left:${sRect.left - hostRect.left}px;top:${sRect.top - hostRect.top}px;width:${cw}px;height:${ch}px;pointer-events:none;`;
-      if (getComputedStyle(this.host).position === "static")
-        this.host.style.position = "relative";
-      this.host.appendChild(cvs);
+      if (getComputedStyle(this.mount).position === "static")
+        this.mount.style.position = "relative";
+      this.mount.appendChild(cvs);
       this.cvs = cvs;
       this.ctx = cvs.getContext("2d");
       this.ctx.scale(this.dpr, this.dpr);
@@ -951,6 +952,262 @@
         el.__dotmap = new dotmap_default(el);
     });
   }
+  var IR_NS = "http://www.w3.org/2000/svg";
+  var IR_COPY_ATTRS = [
+    "fill",
+    "stroke",
+    "stroke-width",
+    "stroke-linecap",
+    "stroke-linejoin",
+    "opacity",
+    "fill-opacity",
+    "stroke-opacity"
+  ];
+  function splitSvgShapes(svg) {
+    const out = [];
+    Array.from(svg.querySelectorAll("path")).forEach((p) => {
+      const d = p.getAttribute("d") || "";
+      const subs = d.match(/[Mm][^Mm]*/g) || [];
+      if (subs.length <= 1) {
+        out.push(p);
+        return;
+      }
+      const frag = document.createDocumentFragment();
+      subs.forEach((sd) => {
+        const np = document.createElementNS(IR_NS, "path");
+        np.setAttribute("d", sd.trim());
+        IR_COPY_ATTRS.forEach((a) => {
+          const v = p.getAttribute(a);
+          if (v != null)
+            np.setAttribute(a, v);
+        });
+        frag.appendChild(np);
+        out.push(np);
+      });
+      p.replaceWith(frag);
+    });
+    return out;
+  }
+  function buildStrokeDraw(segs, opts) {
+    const tl = gsap.timeline({ paused: true });
+    const metric = (x, y) => {
+      switch (opts.dir) {
+        case "br-tl":
+          return -(x + y);
+        case "tr-bl":
+          return -x + y;
+        case "bl-tr":
+          return x - y;
+        case "ltr":
+          return x;
+        case "ttb":
+          return y;
+        default:
+          return x + y;
+      }
+    };
+    const info = segs.map((s) => {
+      let len = 0;
+      let cx = 0;
+      let cy = 0;
+      try {
+        len = s.getTotalLength();
+      } catch (e) {
+      }
+      try {
+        const b = s.getBBox();
+        cx = b.x + b.width / 2;
+        cy = b.y + b.height / 2;
+      } catch (e) {
+      }
+      return { s, len, m: metric(cx, cy) };
+    });
+    const ms = info.map((o) => o.m);
+    const min = Math.min.apply(null, ms);
+    const max = Math.max.apply(null, ms);
+    const range = Math.max(1, max - min);
+    info.forEach((o) => {
+      if (!o.len)
+        return;
+      const at = (o.m - min) / range * opts.duration;
+      gsap.set(o.s, { strokeDasharray: o.len, strokeDashoffset: o.len });
+      tl.to(o.s, { strokeDashoffset: 0, duration: opts.drawDur, ease: opts.ease || "power1.inOut" }, at);
+    });
+    return tl;
+  }
+  function irViewBox(svg) {
+    const b = svg.viewBox && svg.viewBox.baseVal;
+    if (b && b.width)
+      return b;
+    return {
+      x: 0,
+      y: 0,
+      width: parseFloat(svg.getAttribute("width")) || 100,
+      height: parseFloat(svg.getAttribute("height")) || 100
+    };
+  }
+  function buildMapReveal(svg, shapes, opts) {
+    const tl = gsap.timeline({ paused: true });
+    const vb = irViewBox(svg);
+    const midX = vb.x + vb.width / 2;
+    const midY = vb.y + vb.height / 2;
+    const cells = shapes.map((s) => {
+      let cx = midX;
+      let cy = midY;
+      try {
+        const b = s.getBBox();
+        cx = b.x + b.width / 2;
+        cy = b.y + b.height / 2;
+      } catch (e) {
+      }
+      return { s, cx, cy, rand: Math.random() };
+    });
+    const orderVal = (c) => {
+      switch (opts.order) {
+        case "center":
+          return Math.hypot(c.cx - midX, c.cy - midY);
+        case "edges":
+          return -Math.hypot(c.cx - midX, c.cy - midY);
+        case "random":
+          return c.rand;
+        case "ttb":
+          return c.cy;
+        case "ltr":
+          return c.cx;
+        case "br-tl":
+          return -(c.cx + c.cy);
+        default:
+          return c.cx + c.cy;
+      }
+    };
+    const os = cells.map(orderVal);
+    const min = Math.min.apply(null, os);
+    const max = Math.max.apply(null, os);
+    const range = Math.max(1, max - min);
+    cells.forEach((c) => {
+      const at = (orderVal(c) - min) / range * opts.duration;
+      const from = { opacity: 0, transformOrigin: "50% 50%" };
+      const to = { opacity: 1, duration: opts.cell, ease: opts.ease };
+      if (opts.mode === "converge") {
+        const ang = c.rand * Math.PI * 2;
+        const dist = opts.distance * (0.5 + c.rand);
+        from.x = Math.cos(ang) * dist;
+        from.y = Math.sin(ang) * dist;
+        from.scale = opts.scale;
+        to.x = 0;
+        to.y = 0;
+        to.scale = 1;
+      } else if (opts.mode === "radial") {
+        from.scale = opts.scale;
+        to.scale = 1;
+      } else if (opts.mode === "rise") {
+        from.y = opts.distance;
+        to.y = 0;
+      }
+      gsap.set(c.s, from);
+      tl.to(c.s, to, at);
+    });
+    return tl;
+  }
+  function initIndustryReveal(scope = document) {
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    scope.querySelectorAll("[data-industry-reveal]").forEach((wrap) => {
+      if (wrap.__industryReveal)
+        return;
+      wrap.__industryReveal = true;
+      const gridSvg = wrap.querySelector("[data-industry-grid], .hero-industry-bg-grid");
+      const mapSvg = wrap.querySelector("[data-industry-map], .hero-industry-bg-shape");
+      if (!gridSvg && !mapSvg)
+        return;
+      const gridStagger = parseFloat(wrap.getAttribute("data-industry-grid-duration")) || 2.4;
+      const gridDraw = parseFloat(wrap.getAttribute("data-industry-grid-draw")) || 1.1;
+      const gridDir = wrap.getAttribute("data-industry-grid-dir") || "tl-br";
+      const gapAttr = wrap.getAttribute("data-industry-gap");
+      const gap = gapAttr !== null ? parseFloat(gapAttr) : 0.2;
+      if (gridSvg)
+        gsap.set(gridSvg, { visibility: "hidden" });
+      if (mapSvg)
+        gsap.set(mapSvg, { visibility: "hidden" });
+      const runGrid = () => {
+        if (!gridSvg)
+          return null;
+        if (reduced) {
+          gsap.set(gridSvg, { visibility: "visible" });
+          return null;
+        }
+        try {
+          const segs = splitSvgShapes(gridSvg);
+          const tl = buildStrokeDraw(segs, {
+            duration: gridStagger,
+            drawDur: gridDraw,
+            dir: gridDir,
+            ease: wrap.getAttribute("data-industry-grid-ease") || "power1.inOut"
+          });
+          gsap.set(gridSvg, { visibility: "visible" });
+          tl.play(0);
+          return tl;
+        } catch (e) {
+          gsap.set(gridSvg, { visibility: "visible" });
+          return null;
+        }
+      };
+      const mapMode = wrap.getAttribute("data-industry-map-mode") || "converge";
+      const runMap = () => {
+        if (!mapSvg)
+          return;
+        if (reduced) {
+          gsap.set(mapSvg, { visibility: "visible" });
+          return;
+        }
+        if (mapMode === "dotmap") {
+          try {
+            gsap.set(mapSvg, { visibility: "visible" });
+            wrap.__industryMap = new dotmap_default(mapSvg);
+          } catch (e) {
+            gsap.set(mapSvg, { visibility: "visible" });
+          }
+          return;
+        }
+        try {
+          const shapes = splitSvgShapes(mapSvg);
+          const tl = buildMapReveal(mapSvg, shapes, {
+            mode: mapMode,
+            // converge (def) | radial | rise | render
+            duration: parseFloat(wrap.getAttribute("data-industry-map-duration")) || 1.6,
+            // stagger span
+            cell: parseFloat(wrap.getAttribute("data-industry-map-cell")) || 0.6,
+            // per-cell duration
+            order: wrap.getAttribute("data-industry-map-order") || "center",
+            ease: wrap.getAttribute("data-industry-map-ease") || "power3.out",
+            distance: parseFloat(wrap.getAttribute("data-industry-map-distance")) || 40,
+            // fly-in / rise (svg units)
+            scale: parseFloat(wrap.getAttribute("data-industry-map-scale")) || 0.35
+            // start scale (converge/radial)
+          });
+          gsap.set(mapSvg, { visibility: "visible" });
+          tl.play(0);
+        } catch (e) {
+          gsap.set(mapSvg, { visibility: "visible" });
+        }
+      };
+      const play = () => {
+        if (reduced) {
+          runGrid();
+          runMap();
+          return;
+        }
+        const gridTL = runGrid();
+        const gridTotal = gridTL ? gridTL.duration() : 0;
+        gsap.delayedCall(Math.max(0, gridTotal + gap), runMap);
+      };
+      const r = wrap.getBoundingClientRect();
+      if (r.top < window.innerHeight * 0.9 && r.bottom > 0) {
+        play();
+      } else {
+        ScrollTrigger.create({ trigger: wrap, start: "top 80%", once: true, onEnter: play });
+      }
+    });
+  }
   function initDotField(scope = document) {
     const mount = scope.querySelector("[data-dotfield]");
     if (!mount || mount.__dotfield)
@@ -967,36 +1224,46 @@
     mount.__dotfield = new dotfield_default(mount, cfg);
     return mount.__dotfield;
   }
+  var stackingMM = null;
   function initStackingCardsParallax(scope = document) {
-    const cards = scope.querySelectorAll("[data-stacking-cards-item]");
-    if (cards.length < 2)
-      return;
-    cards.forEach((card, i) => {
-      if (i === 0)
+    if (stackingMM)
+      stackingMM.revert();
+    const mm = gsap.matchMedia();
+    stackingMM = mm;
+    mm.add("(min-width:992px)", () => {
+      const cards = scope.querySelectorAll("[data-stacking-cards-item]");
+      if (cards.length < 2)
         return;
-      const previousCard = cards[i - 1];
-      if (!previousCard)
-        return;
-      const previousCardImage = previousCard.querySelector("[data-stacking-cards-img]");
-      let tl = gsap.timeline({
-        defaults: {
-          ease: "none",
-          duration: 1
-        },
-        scrollTrigger: {
-          trigger: card,
-          start: "top bottom",
-          end: "top top",
-          scrub: true,
-          invalidateOnRefresh: true
-        }
-      });
-      tl.fromTo(previousCard, { yPercent: 0 }, { yPercent: 50 }).fromTo(
-        previousCardImage,
-        { rotate: 0, yPercent: 0 },
-        { rotate: -5, yPercent: -25 },
-        "<"
-      );
+      const ctx = gsap.context(() => {
+        cards.forEach((card, i) => {
+          if (i === 0)
+            return;
+          const previousCard = cards[i - 1];
+          if (!previousCard)
+            return;
+          const previousCardImage = previousCard.querySelector("[data-stacking-cards-img]");
+          let tl = gsap.timeline({
+            defaults: {
+              ease: "none",
+              duration: 1
+            },
+            scrollTrigger: {
+              trigger: card,
+              start: "top bottom",
+              end: "top top",
+              scrub: true,
+              invalidateOnRefresh: true
+            }
+          });
+          tl.fromTo(previousCard, { yPercent: 0 }, { yPercent: 50 }).fromTo(
+            previousCardImage,
+            { rotate: 0, yPercent: 0 },
+            { rotate: -5, yPercent: -25 },
+            "<"
+          );
+        });
+      }, scope);
+      return () => ctx.revert();
     });
   }
   function initContentRevealScroll(scope = document) {
@@ -1099,21 +1366,92 @@
     });
     return () => ctx.revert();
   }
+  var stickyStepsMMs = [];
   function initStickyStepsFlip(scope = document) {
+    stickyStepsMMs.forEach((mm) => mm.revert());
+    stickyStepsMMs = [];
     scope.querySelectorAll("[data-sticky-steps-init]").forEach(setupStickySteps);
+  }
+  function setupStickySteps(container) {
+    const items = container.querySelectorAll("[data-sticky-steps-item]");
+    if (items.length < 2)
+      return;
+    if (!container.__ssOriginalHTML)
+      container.__ssOriginalHTML = container.innerHTML;
+    const mm = gsap.matchMedia();
+    stickyStepsMMs.push(mm);
+    mm.add("(min-width:992px)", () => {
+      setupStickyStepsDesktop(container);
+      return () => {
+        container.innerHTML = container.__ssOriginalHTML;
+      };
+    });
+    mm.add("(max-width:991px)", () => {
+      const cleanup = setupStickyStepsMobile(container);
+      return () => {
+        if (cleanup)
+          cleanup();
+        container.innerHTML = container.__ssOriginalHTML;
+      };
+    });
+  }
+  function setupStickyStepsMobile(container) {
+    const bgWrap = container.querySelector(".sticky-steps_bg-wrap");
+    const bgShapes = bgWrap ? Array.from(bgWrap.querySelectorAll("svg")).map((s) => s.outerHTML) : [];
+    if (bgWrap)
+      bgWrap.style.display = "none";
+    const dms = [];
+    Array.from(container.querySelectorAll("[data-sticky-steps-item]")).forEach((item, i) => {
+      const visual = item.querySelector(".sticky-steps__visual");
+      if (!visual)
+        return;
+      const shape = bgShapes.length ? bgShapes[Math.min(i, bgShapes.length - 1)] : null;
+      if (shape) {
+        if (getComputedStyle(visual).position === "static")
+          visual.style.position = "relative";
+        const bg = document.createElement("div");
+        bg.className = "sticky-steps_bg-wrap sticky-steps_bg-wrap--mobile";
+        bg.style.cssText = "position:absolute;inset:0;z-index:0;pointer-events:none;";
+        bg.innerHTML = shape;
+        visual.insertBefore(bg, visual.firstChild);
+        try {
+          dms.push(new dotmap_default(bg));
+        } catch (e) {
+          const s = bg.querySelector("svg");
+          if (s)
+            gsap.set(s, { autoAlpha: 1 });
+        }
+      }
+      const cardSvg = Array.from(visual.querySelectorAll("svg")).find(
+        (s) => !s.closest(".sticky-steps_bg-wrap")
+      );
+      if (!cardSvg)
+        return;
+      cardSvg.style.position = "relative";
+      cardSvg.style.zIndex = "1";
+      const tl = buildStickyReveal(cardSvg);
+      ScrollTrigger.create({
+        trigger: visual,
+        start: "top 80%",
+        once: true,
+        onEnter: () => tl.play()
+      });
+    });
+    return () => dms.forEach((dm) => dm && dm.destroy && dm.destroy());
   }
   function injectStickyStepsCSS() {
     if (document.getElementById("sticky-steps-flip-css"))
       return;
     const s = document.createElement("style");
     s.id = "sticky-steps-flip-css";
-    s.textContent = // perspective + center the flip in the visual; card = 80% of the visual's height,
-    // width auto via the card's aspect ratio. No stretch — relies on the visual's own height.
-    ".sticky-steps__visual{position:relative;perspective:1800px;display:flex;align-items:center;justify-content:center}.ss-flip{position:relative;height:80%;width:auto;aspect-ratio:362 / 502;transform-style:preserve-3d;will-change:transform}.ss-flip__face{position:absolute;inset:0;backface-visibility:hidden;-webkit-backface-visibility:hidden}.ss-flip__face--back{transform:rotateY(180deg)}.ss-flip__face svg{display:block;width:100%;height:100%}";
+    s.textContent = // Desktop-only (the flip is desktop-only): perspective + center the flip in the visual; card = 80%
+    // of the visual's height, width auto via the card's aspect ratio. Scoped so it never touches the
+    // mobile per-item visuals after a resize across the breakpoint.
+    "@media (min-width:992px){.sticky-steps__visual{position:relative;perspective:1800px;display:flex;align-items:center;justify-content:center}.ss-flip{position:relative;height:80%;width:auto;aspect-ratio:362 / 502;transform-style:preserve-3d;will-change:transform}.ss-flip__face{position:absolute;inset:0;backface-visibility:hidden;-webkit-backface-visibility:hidden}.ss-flip__face--back{transform:rotateY(180deg)}.ss-flip__face svg{display:block;width:100%;height:100%}}";
     document.head.appendChild(s);
   }
   function buildStickyReveal(face) {
-    const svg = face.querySelector("svg");
+    const svg = face.tagName && face.tagName.toLowerCase() === "svg" ? face : Array.from(face.querySelectorAll("svg")).find((s) => !s.closest(".sticky-steps_bg-wrap")) || face.querySelector("svg");
     const tl = gsap.timeline({ paused: true, defaults: { ease: "power3.out" } });
     if (!svg)
       return tl;
@@ -1167,9 +1505,7 @@
     });
     return tl;
   }
-  function setupStickySteps(container) {
-    if (container.hasAttribute("data-flip-ready"))
-      return;
+  function setupStickyStepsDesktop(container) {
     const items = Array.from(container.querySelectorAll("[data-sticky-steps-item]"));
     if (items.length < 2)
       return;
@@ -1180,7 +1516,6 @@
     if (cards.some((c) => !c))
       return;
     injectStickyStepsCSS();
-    container.setAttribute("data-flip-ready", "");
     const firstVisual = items[0].querySelector(".sticky-steps__visual");
     const bgWrap = container.querySelector(".sticky-steps_bg-wrap");
     const bgShapes = bgWrap ? Array.from(bgWrap.querySelectorAll("svg")).map((s) => s.outerHTML) : [];
@@ -1298,8 +1633,24 @@
     const [firstCard, secondCard] = cards;
     front.innerHTML = firstCard;
     back.innerHTML = secondCard;
-    buildStickyReveal(front).play();
     setStatus(0);
+    revealBg(0);
+    const frontTL = buildStickyReveal(front);
+    let frontPlayed = false;
+    const playFront = () => {
+      if (frontPlayed)
+        return;
+      frontPlayed = true;
+      frontTL.play();
+    };
+    const firstAnchor = items[0].querySelector("[data-sticky-steps-anchor]");
+    const revealTrigger = firstAnchor || firstVisual;
+    const rr = revealTrigger.getBoundingClientRect();
+    if (rr.top + rr.height / 2 < window.innerHeight * 0.6) {
+      playFront();
+    } else {
+      ScrollTrigger.create({ trigger: revealTrigger, start: "center 60%", once: true, onEnter: playFront });
+    }
     items.forEach((item, index) => {
       const anchor = item.querySelector("[data-sticky-steps-anchor]");
       if (!anchor)
@@ -1338,7 +1689,15 @@
             const direction = trigger.getAttribute("data-parallax-direction") || "vertical";
             const prop = direction === "horizontal" ? "xPercent" : "yPercent";
             const scrubAttr = trigger.getAttribute("data-parallax-scrub");
-            const scrub = scrubAttr ? parseFloat(scrubAttr) : true;
+            let scrub;
+            if (scrubAttr === null || scrubAttr === "true")
+              scrub = true;
+            else if (scrubAttr === "false")
+              scrub = false;
+            else {
+              const n = parseFloat(scrubAttr);
+              scrub = isNaN(n) ? true : n;
+            }
             const startAttr = trigger.getAttribute("data-parallax-start");
             const startVal = startAttr !== null ? parseFloat(startAttr) : 20;
             const endAttr = trigger.getAttribute("data-parallax-end");
@@ -1347,20 +1706,24 @@
             const scrollStart = `clamp(${scrollStartRaw})`;
             const scrollEndRaw = trigger.getAttribute("data-parallax-scroll-end") || "bottom top";
             const scrollEnd = `clamp(${scrollEndRaw})`;
-            gsap.fromTo(
-              target,
-              { [prop]: startVal },
-              {
-                [prop]: endVal,
-                ease: "none",
-                scrollTrigger: {
-                  trigger,
-                  start: scrollStart,
-                  end: scrollEnd,
-                  scrub
-                }
+            const rotateAttr = trigger.getAttribute("data-parallax-rotate");
+            const rot = rotateAttr !== null ? parseFloat(rotateAttr) : 0;
+            const fromVars = { [prop]: startVal };
+            const toVars = {
+              [prop]: endVal,
+              ease: "none",
+              scrollTrigger: {
+                trigger,
+                start: scrollStart,
+                end: scrollEnd,
+                scrub
               }
-            );
+            };
+            if (rot) {
+              fromVars.rotation = rot / 2;
+              toVars.rotation = -rot / 2;
+            }
+            gsap.fromTo(target, fromVars, toVars);
           });
         }, scope);
         return () => ctx.revert();
@@ -1517,6 +1880,103 @@
         marqueeObserver.observe(marquee);
       });
     });
+  }
+
+  // src/filters.js
+  function initResourcesFilter(scope = document) {
+    const toggle = scope.querySelector(".resources-filter");
+    if (!toggle || toggle.__resFilterInit)
+      return;
+    toggle.__resFilterInit = true;
+    let buttons = [...toggle.querySelectorAll("[data-toggle-btn]")];
+    if (buttons.length < 2)
+      buttons = [...toggle.querySelectorAll(".resources-filter-item")];
+    if (buttons.length < 2)
+      return;
+    const list = scope.querySelector(".resources-index-list");
+    const results = scope.querySelector(".resources-index-results");
+    const empty = scope.querySelector(".resources-index-empty");
+    const cards = results ? results.querySelectorAll(".resources-list-item") : [];
+    const pill = toggle.querySelector(".toggle-switch__bg");
+    const norm = (s) => (s || "").toLowerCase().replace(/[^a-z]/g, "").replace(/ies$/, "y").replace(/s$/, "");
+    const label = (btn) => norm(btn.textContent);
+    const isAll = (btn) => label(btn) === "all";
+    const cardCat = (card) => norm(card.querySelector(".text-tiny")?.textContent);
+    const filterCards = (target) => {
+      let matches = 0;
+      cards.forEach((card) => {
+        const match = cardCat(card) === target;
+        const cell = card.closest(".w-dyn-item") || card;
+        cell.style.display = match ? "" : "none";
+        if (match)
+          matches++;
+      });
+      return matches;
+    };
+    const applyState = (btn) => {
+      if (isAll(btn)) {
+        if (list)
+          list.style.display = "";
+        if (results)
+          results.style.display = "none";
+        if (empty)
+          empty.style.display = "none";
+        return;
+      }
+      const hasItems = filterCards(label(btn)) > 0;
+      if (list)
+        list.style.display = "none";
+      if (results)
+        results.style.display = hasItems ? "block" : "none";
+      if (empty)
+        empty.style.display = hasItems ? "none" : "block";
+    };
+    const movePill = () => {
+      const active = buttons[activeIndex];
+      if (!pill || !active)
+        return;
+      pill.style.width = `${active.offsetWidth}px`;
+      pill.style.height = `${active.offsetHeight}px`;
+      pill.style.transform = `translate(${active.offsetLeft}px, ${active.offsetTop}px)`;
+    };
+    let activeIndex = buttons.findIndex(
+      (b) => b.hasAttribute("data-toggle-active") || b.classList.contains("is-active")
+    );
+    if (activeIndex < 0)
+      activeIndex = 0;
+    const setActive = (index) => {
+      activeIndex = index;
+      buttons.forEach((btn, i) => {
+        const active = i === index;
+        btn.setAttribute("aria-pressed", active ? "true" : "false");
+        btn.toggleAttribute("data-toggle-active", active);
+        btn.classList.toggle("is-active", active);
+        btn.tabIndex = active ? 0 : -1;
+      });
+      movePill();
+      applyState(buttons[index]);
+    };
+    buttons.forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const index = buttons.indexOf(btn);
+        if (index !== activeIndex)
+          setActive(index);
+      });
+      btn.addEventListener("keydown", (event) => {
+        const dir = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
+        if (!dir)
+          return;
+        event.preventDefault();
+        const next = (activeIndex + dir + buttons.length) % buttons.length;
+        setActive(next);
+        buttons[next].focus();
+      });
+    });
+    setActive(activeIndex);
+    if (pill && "ResizeObserver" in window) {
+      new ResizeObserver(() => movePill()).observe(toggle);
+    }
+    document.fonts?.ready.then(movePill);
   }
 
   // node_modules/.pnpm/three@0.173.0/node_modules/three/build/three.core.js
@@ -21380,6 +21840,7 @@ void main() {
       this._resolved = false;
       this._started = false;
       this.reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+      this._skip = !!this.config.skipAnimation;
       if (ColorManagement)
         ColorManagement.enabled = false;
       this.renderer = new WebGLRenderer({ antialias: true, alpha: true });
@@ -21684,7 +22145,7 @@ void main() {
       this._lastT = t;
       const c = this.config, u = this.mat.uniforms;
       u.uTime.value = t;
-      const te = this.reduced ? 1e6 : t - this._t0, tl = c.timeline;
+      const te = this.reduced || this._skip ? 1e6 : t - this._t0, tl = c.timeline;
       const rev = Math.min(1, te / Math.max(0.01, tl.revealDur));
       const asm = Math.min(1, Math.max(0, (te - tl.revealDur - tl.hold) / Math.max(0.01, tl.assembleDur)));
       if (!this._resolved && asm >= (c.resolveAt ?? 0.78)) {
@@ -21743,6 +22204,24 @@ void main() {
       cfg.finalFit = finalFit;
     if (mount.getAttribute("data-shapefield-center") === "false")
       cfg.finalCenter = false;
+    const alwaysPlay = mount.getAttribute("data-shapefield-always") === "true";
+    if (!alwaysPlay) {
+      let played = false;
+      try {
+        played = sessionStorage.getItem("mv:heroPlayed") === "1";
+      } catch (e) {
+      }
+      const r = mount.getBoundingClientRect();
+      const scrolledPast = r.bottom < window.innerHeight * 0.5;
+      if (played || scrolledPast) {
+        cfg.skipAnimation = true;
+      } else {
+        try {
+          sessionStorage.setItem("mv:heroPlayed", "1");
+        } catch (e) {
+        }
+      }
+    }
     mount.__shapefield = new shapefield_default(mount, cfg);
     return mount.__shapefield;
   }
@@ -21776,6 +22255,8 @@ void main() {
       initHero(document);
     if (has("[data-dotmap]"))
       initDotMap(nextPage);
+    if (has("[data-industry-reveal]"))
+      initIndustryReveal(document);
     if (has("[data-dotfield]"))
       initDotField(document);
     if (has("[data-button-056]"))
@@ -21792,11 +22273,14 @@ void main() {
       initGlobalParallax(document);
     if (has("[data-card-border]"))
       initCardBorderHover(document);
+    if (has(".resources-filter"))
+      initResourcesFilter(nextPage);
     if (document.querySelector("[data-copy-email]"))
       initCopyEmail(document);
     if (document.querySelector("[data-css-marquee]"))
       initCSSMarquee(document);
     document.documentElement.classList.add("reveal-ready");
+    document.documentElement.classList.add("page-ready");
   }
   function initBeforeEnterFunctions(next) {
     nextPage = next || document;
@@ -21807,6 +22291,8 @@ void main() {
       initHero(nextPage);
     if (has("[data-dotmap]"))
       initDotMap(nextPage);
+    if (has("[data-industry-reveal]"))
+      initIndustryReveal(nextPage);
     if (has("[data-dotfield]"))
       initDotField(nextPage);
     if (has("[data-button-056]"))
@@ -21823,6 +22309,8 @@ void main() {
       initGlobalParallax(nextPage);
     if (has("[data-card-border]"))
       initCardBorderHover(nextPage);
+    if (has(".resources-filter"))
+      initResourcesFilter(nextPage);
     if (has("[data-copy-email]"))
       initCopyEmail(nextPage);
     if (has("[data-css-marquee]"))

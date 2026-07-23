@@ -67,6 +67,9 @@ class DotMap {
     this.host = host;
     this.svg = host.matches('svg') ? host : host.querySelector('svg');
     if (!this.svg) return;
+    // The reveal canvas is HTML — it must live in an HTML element, never inside the <svg> (foreign
+    // content won't render). When the attribute sits directly on the <svg>, mount into its parent.
+    this.mount = host.matches('svg') ? this.svg.parentNode : host;
     this.reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
     if (this.reduced) return; // leave the SVG as-is (instant, no canvas)
 
@@ -195,7 +198,7 @@ class DotMap {
   }
 
   _build() {
-    const hostRect = this.host.getBoundingClientRect();
+    const hostRect = this.mount.getBoundingClientRect();
     const sRect = this.svg.getBoundingClientRect();
     const cw = sRect.width, ch = sRect.height;
     this.map = { cw, ch };
@@ -203,8 +206,8 @@ class DotMap {
     const cvs = document.createElement('canvas');
     cvs.width = Math.round(cw * this.dpr); cvs.height = Math.round(ch * this.dpr);
     cvs.style.cssText = `position:absolute;left:${sRect.left - hostRect.left}px;top:${sRect.top - hostRect.top}px;width:${cw}px;height:${ch}px;pointer-events:none;`;
-    if (getComputedStyle(this.host).position === 'static') this.host.style.position = 'relative';
-    this.host.appendChild(cvs);
+    if (getComputedStyle(this.mount).position === 'static') this.mount.style.position = 'relative';
+    this.mount.appendChild(cvs);
     this.cvs = cvs; this.ctx = cvs.getContext('2d'); this.ctx.scale(this.dpr, this.dpr);
   }
 

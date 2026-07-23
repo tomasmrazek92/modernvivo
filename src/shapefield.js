@@ -55,6 +55,10 @@ class ShapeField {
     this.mount = mount; this.config = deepMerge(DEFAULTS, overrides);
     this.MAX = 6000; this._t0 = 0; this._spin = 0; this._lastT = 0; this._raf = 0; this._visible = true; this._resolved = false; this._started = false;
     this.reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    // Skip the intro (jump straight to the resolved shape, fire resolved on frame 1) — same path as
+    // reduced-motion. initHero sets config.skipAnimation when already played this session or loaded
+    // past the hero. Kept separate from `reduced` so the reasons stay distinct.
+    this._skip = !!this.config.skipAnimation;
     if (THREE.ColorManagement) THREE.ColorManagement.enabled = false;
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); this.renderer.setClearColor(0x000000, 0);
@@ -250,7 +254,7 @@ class ShapeField {
     if (!this._started) { this._started = true; this._t0 = now; this._lastT = now; }
     const t = now, dt = Math.min(0.05, t - this._lastT); this._lastT = t;
     const c = this.config, u = this.mat.uniforms; u.uTime.value = t;
-    const te = this.reduced ? 1e6 : (t - this._t0), tl = c.timeline;
+    const te = (this.reduced || this._skip) ? 1e6 : (t - this._t0), tl = c.timeline;
     const rev = Math.min(1, te/Math.max(0.01,tl.revealDur));
     const asm = Math.min(1, Math.max(0, (te-tl.revealDur-tl.hold)/Math.max(0.01,tl.assembleDur)));
     if (!this._resolved && asm >= (c.resolveAt ?? 0.78)) { // shapes have formed → let the hero content reveal
