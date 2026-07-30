@@ -996,10 +996,17 @@ function injectStickyStepsCSS() {
     // of the visual's height, width auto via the card's aspect ratio. Scoped so it never touches the
     // mobile per-item visuals after a resize across the breakpoint.
     '@media (min-width:992px){' +
-    '.sticky-steps__visual{position:relative;perspective:1800px;display:flex;align-items:center;justify-content:center}' +
-    '.ss-flip{position:relative;height:80%;width:auto;aspect-ratio:362 / 502;transform-style:preserve-3d;will-change:transform}' +
-    '.ss-flip__face{position:absolute;inset:0;backface-visibility:hidden;-webkit-backface-visibility:hidden}' +
-    '.ss-flip__face--back{transform:rotateY(180deg)}' +
+    '.sticky-steps__visual{position:relative;perspective:1800px;-webkit-perspective:1800px;display:flex;align-items:center;justify-content:center}' +
+    // NOTE: no `will-change:transform` here — some WebKit versions flatten a preserve-3d subtree
+    // when the element is also marked will-change, which breaks the flip. GSAP promotes the layer
+    // anyway once it starts writing transforms.
+    '.ss-flip{position:relative;height:80%;width:auto;aspect-ratio:362 / 502;transform-style:preserve-3d;-webkit-transform-style:preserve-3d}' +
+    // The explicit rotateY(0) on the base face is deliberate: WebKit only keeps an element in its
+    // parent's 3D rendering context (and thus honors backface-visibility) reliably when the element
+    // carries its own 3D transform. Without it the front face flattens and its backface stays
+    // visible — you see card 1 through card 0, and a mirrored front instead of the back on flip.
+    '.ss-flip__face{position:absolute;inset:0;backface-visibility:hidden;-webkit-backface-visibility:hidden;transform-style:preserve-3d;-webkit-transform-style:preserve-3d;transform:rotateY(0deg);-webkit-transform:rotateY(0deg)}' +
+    '.ss-flip__face--back{transform:rotateY(180deg);-webkit-transform:rotateY(180deg)}' +
     '.ss-flip__face svg{display:block;width:100%;height:100%}' +
     '}';
   document.head.appendChild(s);
@@ -1055,9 +1062,20 @@ function buildStickyReveal(face) {
       tag === 'line' || tag === 'polyline' || (tag === 'path' && stroke && stroke !== 'none');
     const hasTransform = el.hasAttribute('transform'); // don't let GSAP y clobber an existing translate
 
+    let len = 0;
     if (stroked && stroke !== '#e3e0df') {
+      // WebKit throws on getTotalLength() for a degenerate/empty path (and for anything not
+      // currently rendered). Unguarded, that exception escapes buildStickyReveal and takes the whole
+      // sticky-steps setup with it — including the ScrollTriggers built after it.
+      try {
+        len = el.getTotalLength();
+      } catch (e) {
+        len = 0;
+      }
+    }
+
+    if (len) {
       // draw lines / underlines on
-      const len = el.getTotalLength();
       gsap.set(el, { strokeDasharray: len, strokeDashoffset: len });
       tl.to(el, { strokeDashoffset: 0, duration: 0.6 }, at);
     } else if (tag === 'circle') {
@@ -1137,6 +1155,11 @@ function setupStickyStepsDesktop(container) {
   let incomingFace = null;
   let incomingTL = null;
 
+  // Explicit face visibility — the flip's correctness does not depend on backface-visibility working.
+  const setFaceVisible = (face, on) => {
+    face.style.visibility = on ? 'visible' : 'hidden';
+  };
+
   const setStatus = (i) =>
     items.forEach((it, n) =>
       it.setAttribute(
@@ -1183,6 +1206,8 @@ function setupStickyStepsDesktop(container) {
     pendingIndex = index;
     rot += 180; // ONE half-flip, always
     incomingFace = frontUp ? back : front; // the face rotating into view
+    const inFace = incomingFace; // captured: setActiveStep can re-target the CONTENT mid-flip, not the face
+    const outFace = frontUp ? front : back; // the face rotating away — must be computed before the toggle
     frontUp = !frontUp;
     incomingFace.innerHTML = cards[index];
     incomingTL = buildStickyReveal(incomingFace);
@@ -1194,6 +1219,14 @@ function setupStickyStepsDesktop(container) {
       onUpdate() {
         if (!revealed && this.progress() >= 0.5) {
           revealed = true;
+          // Swap face visibility ourselves at the halfway point rather than trusting
+          // backface-visibility — WebKit does not reliably honor it here (SVG-filled faces, and any
+          // ancestor that flattens the 3D context is enough to lose it), which showed up as a
+          // mirrored front face on step 2 with the back card never appearing.
+          // `visibility` specifically, NOT opacity: an opacity < 1 flattens the 3D rendering
+          // context and would break the flip itself.
+          setFaceVisible(inFace, true);
+          setFaceVisible(outFace, false);
           incomingTL.play();
         }
       },
@@ -1227,6 +1260,15 @@ function setupStickyStepsDesktop(container) {
   const [firstCard, secondCard] = cards;
   front.innerHTML = firstCard;
   back.innerHTML = secondCard;
+  // Card 0 faces us, card 1 waits behind. Set this explicitly instead of leaning on
+  // backface-visibility (see startFlip) — otherwise on WebKit card 1's content bleeds through card 0
+  // from the very first paint, which reads as "the first card isn't hidden".
+  setFaceVisible(front, true);
+  setFaceVisible(back, false);
+  // Build (and discard) a paused reveal for the back face purely for its side effect: the fromTo
+  // tweens render their hidden "from" state immediately, so card 1's content is armed-and-hidden
+  // rather than sitting fully drawn behind card 0. startFlip rebuilds it when card 1 actually flips in.
+  buildStickyReveal(back);
   setStatus(0);
   // Seed the step-0 background so it ALSO assembles on scroll-in — not just on the first step change.
   // Item 0's ScrollTrigger onEnter doesn't fire if its start is already passed when the trigger is
