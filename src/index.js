@@ -6,6 +6,7 @@
 // three is bundled into dist by esbuild (imported by ./shapefield.js).
 
 import {
+  initBackToTop,
   initButton056,
   initCardBorderHover,
   initContentRevealScroll,
@@ -76,6 +77,7 @@ function initOnceFunctions() {
   if (has('.resources-filter')) initResourcesFilter(nextPage);
   if (document.querySelector('[data-copy-email]')) initCopyEmail(document); // footer/persistent → document-scoped gate
   if (document.querySelector('[data-css-marquee]')) initCSSMarquee(document); // marquee may live in footer
+  if (document.querySelector('[data-back-to-top="wrap"]')) initBackToTop(); // footer/persistent → document-scoped gate
 
   // reveals have set their own initial hidden state (inline) — safe to drop the CSS pre-hide gate
   document.documentElement.classList.add('reveal-ready');
@@ -109,6 +111,9 @@ function initAfterEnterFunctions(next) {
   if (has('.resources-filter')) initResourcesFilter(nextPage);
   if (has('[data-copy-email]')) initCopyEmail(nextPage);
   if (has('[data-css-marquee]')) initCSSMarquee(nextPage);
+  // footer-persistent: gate on document (has() is container-scoped). Re-run rebuilds the
+  // ScrollTrigger that beforeEnter killed; the click handler is guarded against double-binding.
+  if (document.querySelector('[data-back-to-top="wrap"]')) initBackToTop();
 
   document.documentElement.classList.add('reveal-ready');
 }
@@ -344,6 +349,9 @@ function initLenis() {
     lerp: 0.165,
     wheelMultiplier: 1.25,
   });
+
+  // expose the instance so effects outside this module can drive the scroll (back-to-top)
+  window.lenis = lenis;
 
   if (hasScrollTrigger) {
     lenis.on('scroll', ScrollTrigger.update);

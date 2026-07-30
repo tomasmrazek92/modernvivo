@@ -1865,19 +1865,87 @@
       );
     }
     document.fonts.ready.then(() => {
-      marquees.forEach((marquee) => {
-        if (marquee.__marquee)
-          return;
-        marquee.__marquee = true;
-        const speed = parseFloat(marquee.getAttribute("data-css-marquee-speed")) || 75;
-        marquee.querySelectorAll("[data-css-marquee-list]").forEach((list) => {
-          marquee.appendChild(list.cloneNode(true));
+      requestAnimationFrame(() => {
+        marquees.forEach((marquee) => {
+          if (marquee.__marquee)
+            return;
+          marquee.__marquee = true;
+          const speed = parseFloat(marquee.getAttribute("data-css-marquee-speed")) || 75;
+          const lists = Array.from(marquee.querySelectorAll("[data-css-marquee-list]"));
+          if (!lists.length)
+            return;
+          const width = lists[0].getBoundingClientRect().width;
+          const duration = width / speed + "s";
+          lists.forEach((list) => {
+            marquee.appendChild(list.cloneNode(true));
+          });
+          marquee.querySelectorAll("[data-css-marquee-list]").forEach((list) => {
+            list.style.animationDuration = duration;
+            list.style.animationPlayState = "paused";
+          });
+          marqueeObserver.observe(marquee);
         });
-        marquee.querySelectorAll("[data-css-marquee-list]").forEach((list) => {
-          list.style.animationDuration = list.offsetWidth / speed + "s";
-          list.style.animationPlayState = "paused";
+      });
+    });
+  }
+  function initBackToTop() {
+    const wrap = document.querySelector('[data-back-to-top="wrap"]');
+    const button = document.querySelector('[data-back-to-top="button"]');
+    if (!wrap || !button)
+      return;
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const minimumScrollDistance = parseFloat(wrap.getAttribute("data-back-to-top-distance")) || 50;
+    const scrollDuration = parseFloat(wrap.getAttribute("data-back-to-top-duration")) || 1.2;
+    gsap.set(wrap, { autoAlpha: 1 });
+    gsap.set(button, { autoAlpha: 0, rotate: reduced ? 0 : -65, scale: reduced ? 1 : 0.4 });
+    ScrollTrigger.create({
+      trigger: document.body,
+      start: `top top-=${minimumScrollDistance}%`,
+      onEnter: () => {
+        gsap.to(button, {
+          autoAlpha: 1,
+          rotate: 0,
+          scale: 1,
+          duration: reduced ? 0 : 0.45,
+          ease: "power4.out"
         });
-        marqueeObserver.observe(marquee);
+      },
+      onLeaveBack: () => {
+        gsap.to(button, {
+          autoAlpha: 0,
+          rotate: reduced ? 0 : -65,
+          scale: reduced ? 1 : 0.6,
+          duration: reduced ? 0 : 0.4,
+          ease: "power4.out"
+        });
+      }
+    });
+    if (button.__backToTop)
+      return;
+    button.__backToTop = true;
+    const nativeScrollTop = () => {
+      window.scrollTo({ top: 0, behavior: reduced ? "auto" : "smooth" });
+    };
+    button.addEventListener("click", () => {
+      const lenis2 = window.lenis;
+      if (!lenis2 || typeof lenis2.scrollTo !== "function") {
+        nativeScrollTop();
+        return;
+      }
+      const startY = window.scrollY;
+      try {
+        lenis2.scrollTo(0, reduced ? { immediate: true } : { duration: scrollDuration });
+      } catch (err) {
+        nativeScrollTop();
+        return;
+      }
+      if (startY === 0)
+        return;
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          if (window.scrollY >= startY)
+            nativeScrollTop();
+        });
       });
     });
   }
@@ -22279,6 +22347,8 @@ void main() {
       initCopyEmail(document);
     if (document.querySelector("[data-css-marquee]"))
       initCSSMarquee(document);
+    if (document.querySelector('[data-back-to-top="wrap"]'))
+      initBackToTop();
     document.documentElement.classList.add("reveal-ready");
     document.documentElement.classList.add("page-ready");
   }
@@ -22315,6 +22385,8 @@ void main() {
       initCopyEmail(nextPage);
     if (has("[data-css-marquee]"))
       initCSSMarquee(nextPage);
+    if (document.querySelector('[data-back-to-top="wrap"]'))
+      initBackToTop();
     document.documentElement.classList.add("reveal-ready");
   }
   function runPageOnceAnimation(next) {
@@ -22490,6 +22562,7 @@ void main() {
       lerp: 0.165,
       wheelMultiplier: 1.25
     });
+    window.lenis = lenis;
     if (hasScrollTrigger) {
       lenis.on("scroll", ScrollTrigger.update);
     }

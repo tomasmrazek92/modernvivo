@@ -1584,26 +1584,132 @@ export function initCSSMarquee(scope = document) {
     );
   }
 
-  // fonts.ready so the width (→ duration) is measured against the loaded font, not a fallback
+  // fonts.ready so the width (→ duration) is measured against the loaded font, not a fallback.
+  // Safari resolves fonts.ready BEFORE the webfont has actually painted, so measuring straight
+  // out of the .then() reads fallback-font widths (that's the Chrome-18.4s / Safari-7.6s split:
+  // same speed, different measured width). One extra rAF puts us after the font's layout pass.
   document.fonts.ready.then(() => {
-    marquees.forEach((marquee) => {
-      if (marquee.__marquee) return; // guard: don't duplicate the list again on barba re-init
-      marquee.__marquee = true;
+    requestAnimationFrame(() => {
+      marquees.forEach((marquee) => {
+        if (marquee.__marquee) return; // guard: don't duplicate the list again on barba re-init
+        marquee.__marquee = true;
 
-      const speed = parseFloat(marquee.getAttribute('data-css-marquee-speed')) || 75; // px/sec
+        const speed = parseFloat(marquee.getAttribute('data-css-marquee-speed')) || 75; // px/sec
 
-      // duplicate each list so the scroll wraps seamlessly
-      marquee.querySelectorAll('[data-css-marquee-list]').forEach((list) => {
-        marquee.appendChild(list.cloneNode(true));
+        const lists = Array.from(marquee.querySelectorAll('[data-css-marquee-list]'));
+        if (!lists.length) return;
+
+        // Measure BEFORE cloning: appending a second list can re-run flex layout and shrink the
+        // items (engine-dependent for a nowrap flex child), so a post-clone read is not the width
+        // the keyframe's translateX(-100%) actually travels. getBoundingClientRect keeps the
+        // subpixel value — offsetWidth rounds to an integer.
+        const width = lists[0].getBoundingClientRect().width;
+        const duration = width / speed + 's';
+
+        // duplicate each list so the scroll wraps seamlessly
+        lists.forEach((list) => {
+          marquee.appendChild(list.cloneNode(true));
+        });
+
+        // one duration for every list (original + clones) — they're identical, so measuring each
+        // separately risks two different durations and a visible desync mid-loop
+        marquee.querySelectorAll('[data-css-marquee-list]').forEach((list) => {
+          list.style.animationDuration = duration;
+          list.style.animationPlayState = 'paused';
+        });
+
+        marqueeObserver.observe(marquee);
       });
+    });
+  });
+}
 
-      // set duration from width (constant speed), start paused until scrolled into view
-      marquee.querySelectorAll('[data-css-marquee-list]').forEach((list) => {
-        list.style.animationDuration = list.offsetWidth / speed + 's';
-        list.style.animationPlayState = 'paused';
+// -----------------------------------------
+// BACK TO TOP (Osmo) — [data-back-to-top="wrap"] + [data-back-to-top="button"]
+// -----------------------------------------
+// Lives in the FOOTER (outside the barba container), so it's queried against `document`, not the
+// scope. Two halves with different lifetimes:
+//   - click binding: bound ONCE (guard), because the footer element itself persists across navs
+//   - ScrollTrigger: re-created on every init, because beforeEnter kills all ScrollTriggers on nav
+// Scrolls with Lenis when present (window.lenis, set in index.js initLenis) — a native
+// window.scrollTo fights Lenis's rAF loop and stutters. Falls back to native if Lenis is absent.
+// Attrs (on the wrap): data-back-to-top-distance (vh % scrolled before it appears, def 50)
+//                      data-back-to-top-duration  (scroll-to-top duration in s, def 1.2)
+export function initBackToTop() {
+  const wrap = document.querySelector('[data-back-to-top="wrap"]');
+  const button = document.querySelector('[data-back-to-top="button"]');
+  if (!wrap || !button) return;
+
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const minimumScrollDistance = parseFloat(wrap.getAttribute('data-back-to-top-distance')) || 50; // vh %
+  const scrollDuration = parseFloat(wrap.getAttribute('data-back-to-top-duration')) || 1.2; // seconds
+
+  // undo the CSS pre-hide on the wrapper (it exists to stop a flash before JS runs), keep the
+  // button itself hidden until the scroll threshold is crossed
+  gsap.set(wrap, { autoAlpha: 1 });
+  gsap.set(button, { autoAlpha: 0, rotate: reduced ? 0 : -65, scale: reduced ? 1 : 0.4 });
+
+  // re-created every init — the previous one was killed in beforeEnter
+  ScrollTrigger.create({
+    trigger: document.body,
+    start: `top top-=${minimumScrollDistance}%`,
+    onEnter: () => {
+      gsap.to(button, {
+        autoAlpha: 1,
+        rotate: 0,
+        scale: 1,
+        duration: reduced ? 0 : 0.45,
+        ease: 'power4.out',
       });
+    },
+    onLeaveBack: () => {
+      gsap.to(button, {
+        autoAlpha: 0,
+        rotate: reduced ? 0 : -65,
+        scale: reduced ? 1 : 0.6,
+        duration: reduced ? 0 : 0.4,
+        ease: 'power4.out',
+      });
+    },
+  });
 
-      marqueeObserver.observe(marquee);
+  if (button.__backToTop) return; // guard: the footer button persists, don't stack click handlers
+  button.__backToTop = true;
+
+  const nativeScrollTop = () => {
+    window.scrollTo({ top: 0, behavior: reduced ? 'auto' : 'smooth' });
+  };
+
+  button.addEventListener('click', () => {
+    const lenis = window.lenis;
+
+    // no Lenis on the page at all (CDN blocked / not loaded) → native, done
+    if (!lenis || typeof lenis.scrollTo !== 'function') {
+      nativeScrollTop();
+      return;
+    }
+
+    const startY = window.scrollY;
+
+    // Lenis is present but can still fail to move the page: it throws, or it's currently
+    // .stop()'d (barba does that during a page transition) in which case scrollTo silently
+    // no-ops. Catch the throw AND verify movement on the next frames before giving up.
+    try {
+      // `immediate` (not duration:0) for reduced motion — Lenis's duration path can no-op at 0
+      lenis.scrollTo(0, reduced ? { immediate: true } : { duration: scrollDuration });
+    } catch (err) {
+      nativeScrollTop();
+      return;
+    }
+
+    if (startY === 0) return; // already at the top, nothing to verify
+
+    // 2 rAFs ≈ 2 frames: enough for one Lenis raf tick to have run, short enough that the
+    // native fallback still reads as the same click. If nothing moved, Lenis isn't driving.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (window.scrollY >= startY) nativeScrollTop();
+      });
     });
   });
 }
