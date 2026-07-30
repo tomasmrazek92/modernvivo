@@ -1277,26 +1277,10 @@ function setupStickyStepsDesktop(container) {
   // section scrolls into view; already in view → assembles now. Dedups with item 0's onEnter via bgIndex.
   revealBg(0);
 
-  // Card 0's content reveal plays on scroll-into-view — same staggered reveal every other step gets at
-  // its flip — instead of firing instantly at init. buildStickyReveal returns a PAUSED timeline whose
-  // fromTo tweens render their hidden "from" state immediately, so the card sits hidden until then.
-  // Uses item 0's anchor at the same 'center 60%' as the step triggers; if we loaded already scrolled
-  // into/past the section (a passed ScrollTrigger won't fire onEnter), reveal it now.
-  const frontTL = buildStickyReveal(front);
-  let frontPlayed = false;
-  const playFront = () => {
-    if (frontPlayed) return;
-    frontPlayed = true;
-    frontTL.play();
-  };
-  const firstAnchor = items[0].querySelector('[data-sticky-steps-anchor]');
-  const revealTrigger = firstAnchor || firstVisual;
-  const rr = revealTrigger.getBoundingClientRect();
-  if (rr.top + rr.height / 2 < window.innerHeight * 0.6) {
-    playFront();
-  } else {
-    ScrollTrigger.create({ trigger: revealTrigger, start: 'center 60%', once: true, onEnter: playFront });
-  }
+  // Card 0 is deliberately NOT revealed on scroll-into-view — it just sits fully visible from the
+  // start (front.innerHTML above is its resting state; nothing hides it). Its staggered reveal only
+  // plays when card 0 flips back IN from step 2, which startFlip handles like any other step.
+  // (The previous scroll-into-view reveal fired on approach and read as the card animating twice.)
 
   items.forEach((item, index) => {
     const anchor = item.querySelector('[data-sticky-steps-anchor]');
