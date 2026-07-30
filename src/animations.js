@@ -1566,6 +1566,85 @@ export function initCopyEmail(scope = document) {
 //   [data-css-marquee-list]         — the scrolling list (gets duplicated to fill the loop)
 //   data-css-marquee-speed="75"     — pixels per second (optional, default 75)
 let marqueeObserver;
+let marqueeResizeObserver;
+
+// Recompute animation-duration from the CURRENT measured width. Called on init AND from a
+// ResizeObserver, because there is no single reliable "layout is final" moment to measure at:
+// fonts.ready doesn't wait for IMAGES (a logo marquee measures short until the images decode —
+// that was the Safari-7.6s / Chrome-18.4s split; Chrome had them decoded, Safari didn't yet),
+// and the viewport can change later anyway. So instead of chasing the right event, re-derive the
+// duration whenever the width actually changes. Self-healing: fonts, images, responsive resize.
+// Debug logging for the width measurement — the marquee's duration is only ever as good as the
+// width it was measured from, and the interesting question is always "what did it read, WHEN?".
+// Enable without touching Webflow by adding ?marquee-debug to the URL (works on the published
+// site, which is the only place Safari can be tested), or per-marquee via
+// data-css-marquee-debug="true". Off by default: no console noise in production.
+const marqueeDebugQuery =
+  typeof location !== 'undefined' && /[?&]marquee-debug/.test(location.search);
+const marqueeDebug = (marquee) =>
+  marqueeDebugQuery || marquee.getAttribute('data-css-marquee-debug') === 'true';
+
+function logMarquee(marquee, reason, data) {
+  if (!marqueeDebug(marquee)) return;
+
+  const list = marquee.querySelector('[data-css-marquee-list]');
+  const imgs = list ? Array.from(list.querySelectorAll('img')) : [];
+
+  console.log(`[marquee] ${reason} @ ${Math.round(performance.now())}ms`, {
+    ...data,
+    // rect vs scrollWidth: if scrollWidth is much larger, the list is being COMPRESSED by its
+    // parent (flex-shrink) rather than measured early — a CSS fix, not a timing one
+    scrollWidth: list?.scrollWidth,
+    flexShrink: list ? getComputedStyle(list).flexShrink : null,
+    parentDisplay: list?.parentElement ? getComputedStyle(list.parentElement).display : null,
+    lists: marquee.querySelectorAll('[data-css-marquee-list]').length,
+    // the image hypothesis, directly: un-decoded images make the list measure short
+    imgs: imgs.length,
+    imgsComplete: imgs.filter((i) => i.complete && i.naturalWidth > 0).length,
+    fontsStatus: document.fonts?.status,
+    marquee,
+  });
+}
+
+function setMarqueeDuration(marquee, reason = 'measure') {
+  const lists = marquee.querySelectorAll('[data-css-marquee-list]');
+  if (!lists.length) return;
+
+  const width = lists[0].getBoundingClientRect().width;
+  if (!width) {
+    logMarquee(marquee, `${reason} → SKIPPED (width 0, not laid out)`, { width });
+    return; // not laid out yet (display:none / 0-width) — the observer will call us again
+  }
+
+  const speed = parseFloat(marquee.getAttribute('data-css-marquee-speed')) || 75; // px/sec
+  const duration = width / speed;
+
+  // skip sub-pixel noise: rewriting animation-duration on a running animation re-maps its
+  // progress, which shows as a tiny jump — only worth it for a real width change
+  if (marquee.__marqueeWidth && Math.abs(marquee.__marqueeWidth - width) < 1) {
+    logMarquee(marquee, `${reason} → SKIPPED (width unchanged)`, {
+      width,
+      previousWidth: marquee.__marqueeWidth,
+    });
+    return;
+  }
+
+  logMarquee(marquee, reason, {
+    width,
+    previousWidth: marquee.__marqueeWidth ?? null,
+    speed,
+    duration: duration + 's',
+  });
+
+  marquee.__marqueeWidth = width;
+
+  // one duration for every list (original + clones) — they're identical, so measuring each
+  // separately risks two different durations and a visible desync mid-loop
+  lists.forEach((list) => {
+    list.style.animationDuration = duration + 's';
+  });
+}
+
 export function initCSSMarquee(scope = document) {
   const marquees = scope.querySelectorAll('[data-css-marquee]');
   if (!marquees.length) return;
@@ -1584,42 +1663,40 @@ export function initCSSMarquee(scope = document) {
     );
   }
 
-  // fonts.ready so the width (→ duration) is measured against the loaded font, not a fallback.
-  // Safari resolves fonts.ready BEFORE the webfont has actually painted, so measuring straight
-  // out of the .then() reads fallback-font widths (that's the Chrome-18.4s / Safari-7.6s split:
-  // same speed, different measured width). One extra rAF puts us after the font's layout pass.
-  document.fonts.ready.then(() => {
-    requestAnimationFrame(() => {
-      marquees.forEach((marquee) => {
-        if (marquee.__marquee) return; // guard: don't duplicate the list again on barba re-init
-        marquee.__marquee = true;
-
-        const speed = parseFloat(marquee.getAttribute('data-css-marquee-speed')) || 75; // px/sec
-
-        const lists = Array.from(marquee.querySelectorAll('[data-css-marquee-list]'));
-        if (!lists.length) return;
-
-        // Measure BEFORE cloning: appending a second list can re-run flex layout and shrink the
-        // items (engine-dependent for a nowrap flex child), so a post-clone read is not the width
-        // the keyframe's translateX(-100%) actually travels. getBoundingClientRect keeps the
-        // subpixel value — offsetWidth rounds to an integer.
-        const width = lists[0].getBoundingClientRect().width;
-        const duration = width / speed + 's';
-
-        // duplicate each list so the scroll wraps seamlessly
-        lists.forEach((list) => {
-          marquee.appendChild(list.cloneNode(true));
-        });
-
-        // one duration for every list (original + clones) — they're identical, so measuring each
-        // separately risks two different durations and a visible desync mid-loop
-        marquee.querySelectorAll('[data-css-marquee-list]').forEach((list) => {
-          list.style.animationDuration = duration;
-          list.style.animationPlayState = 'paused';
-        });
-
-        marqueeObserver.observe(marquee);
+  // one shared ResizeObserver watching each marquee's first list — fires when the font swaps in,
+  // when images decode, and on viewport resize, i.e. every moment the duration could go stale.
+  // (transform doesn't trigger RO, so the marquee's own animation can't feed back into this.)
+  if (!marqueeResizeObserver && typeof ResizeObserver !== 'undefined') {
+    marqueeResizeObserver = new ResizeObserver((entries) => {
+      entries.forEach((entry) => {
+        const marquee = entry.target.closest('[data-css-marquee]');
+        if (marquee) setMarqueeDuration(marquee, 'resize-observer');
       });
+    });
+  }
+
+  document.fonts.ready.then(() => {
+    marquees.forEach((marquee) => {
+      if (marquee.__marquee) return; // guard: don't duplicate the list again on barba re-init
+      marquee.__marquee = true;
+
+      const lists = Array.from(marquee.querySelectorAll('[data-css-marquee-list]'));
+      if (!lists.length) return;
+
+      // duplicate each list so the scroll wraps seamlessly
+      lists.forEach((list) => {
+        marquee.appendChild(list.cloneNode(true));
+      });
+
+      // start paused until scrolled into view; duration comes from the measurement below
+      marquee.querySelectorAll('[data-css-marquee-list]').forEach((list) => {
+        list.style.animationPlayState = 'paused';
+      });
+
+      setMarqueeDuration(marquee, 'init (after fonts.ready)');
+      marqueeObserver.observe(marquee);
+      // observe the ORIGINAL list (still lists[0]); clones track it
+      marqueeResizeObserver?.observe(lists[0]);
     });
   });
 }
