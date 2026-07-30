@@ -19,9 +19,12 @@ import {
   initIndustryReveal,
   initNavMenu,
   initNavReveal,
+  initSearchDock,
+  initSearchSuggestions,
   initStackingCardsParallax,
   initStickyStepsFlip,
 } from './animations.js';
+import { initCalendly } from './calendly.js';
 import { initResourcesFilter } from './filters.js';
 import { initHero } from './hero.js';
 
@@ -74,7 +77,10 @@ function initOnceFunctions() {
   if (has('[data-sticky-steps-init]')) initStickyStepsFlip(document);
   if (has('[data-parallax="trigger"]')) initGlobalParallax(document);
   if (has('[data-card-border]')) initCardBorderHover(document);
+  if (has('[data-search-wrapper]')) initSearchDock(document);
+  if (document.querySelector('[data-suggestion-item]')) initSearchSuggestions(document); // may sit in the dock clone on <body>
   if (has('.resources-filter')) initResourcesFilter(nextPage);
+  if (has('[data-calendly]')) initCalendly(nextPage);
   if (document.querySelector('[data-copy-email]')) initCopyEmail(document); // footer/persistent → document-scoped gate
   if (document.querySelector('[data-css-marquee]')) initCSSMarquee(document); // marquee may live in footer
   if (document.querySelector('[data-back-to-top="wrap"]')) initBackToTop(); // footer/persistent → document-scoped gate
@@ -108,7 +114,10 @@ function initAfterEnterFunctions(next) {
   if (has('[data-sticky-steps-init]')) initStickyStepsFlip(nextPage);
   if (has('[data-parallax="trigger"]')) initGlobalParallax(nextPage);
   if (has('[data-card-border]')) initCardBorderHover(nextPage);
+  if (has('[data-search-wrapper]')) initSearchDock(nextPage);
+  if (document.querySelector('[data-suggestion-item]')) initSearchSuggestions(document);
   if (has('.resources-filter')) initResourcesFilter(nextPage);
+  if (has('[data-calendly]')) initCalendly(nextPage);
   if (has('[data-copy-email]')) initCopyEmail(nextPage);
   if (has('[data-css-marquee]')) initCSSMarquee(nextPage);
   // footer-persistent: gate on document (has() is container-scoped). Re-run rebuilds the

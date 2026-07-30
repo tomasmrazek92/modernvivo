@@ -1816,3 +1816,252 @@ export function initBackToTop() {
     });
   });
 }
+
+// -----------------------------------------
+// SEARCH DOCK — [data-search-wrapper]
+// -----------------------------------------
+// Once the closest <section> scrolls out of view, a copy of the search slides up from the bottom of
+// the screen and stays pinned there; scrolling back into the section sends it away again.
+//
+// It's a CLONE, and the ORIGINAL is never touched — not taken out of the flow, not height-frozen —
+// so there is no way for docking to shift the page. That's only safe because the search's action is
+// a redirect (read the value, go to another URL): there's no live filter state to lose. The clone
+// still doesn't own that behaviour though — it FORWARDS to the original (copies the value across,
+// fires input/change, then clicks the matching original button), so whatever the real search does
+// stays defined in exactly one place and the dock can't drift out of sync with it.
+//
+// JS owns only WHEN it docks and the slide. Everything visual is CSS, off a state attribute on the
+// clone, plus a class on <body> for neutralising competing z-indexes:
+//
+//   data-search-dock="idle"     off duty — style it display:none
+//   data-search-dock="docked"   pinned by your CSS (stays set until the slide-out ends)
+//   body.search-docked          present for exactly as long as the dock is on screen
+//
+// The clone is appended to <body>, so position:fixed can't be broken by a transformed ancestor, and
+// any stale dock from a previous barba page is removed on init.
+//
+// NOTE: this animates the clone's TRANSFORM, so the docked CSS must not use one — centre with
+// left/right/margin or a flex parent, never `translateX(-50%)`, or the two will fight.
+//
+// Attrs on [data-search-wrapper]:
+//   data-search-dock-offset   px past the viewport top before docking (def 100)
+//   data-search-dock-duration slide duration in seconds (def 0.6)
+//   data-search-dock-trigger  CSS selector overriding the closest <section> as the trigger
+//   data-search-dock-target   CSS-selectable child to clone instead of the <form>
+export function initSearchDock(scope = document) {
+  const wrapper = scope.querySelector('[data-search-wrapper]');
+  if (!wrapper || wrapper.__searchDock) return;
+
+  const bar =
+    wrapper.querySelector('[data-search-dock-target]') ||
+    wrapper.querySelector('form') ||
+    wrapper.firstElementChild;
+  if (!bar) return;
+  wrapper.__searchDock = true;
+
+  const offset = parseFloat(wrapper.getAttribute('data-search-dock-offset')) || 100;
+  const duration = parseFloat(wrapper.getAttribute('data-search-dock-duration')) || 0.6;
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // A barba nav can leave the previous page's dock behind — it lives on <body>, outside the
+  // container. Match on the CLONE-IDENTITY attribute, never the state attribute: state is cosmetic
+  // and could plausibly end up on the real search, and "remove everything with that attribute"
+  // would then delete the actual form. Extra belt: never remove an element containing the original.
+  document.querySelectorAll('body > [data-search-dock-clone]').forEach((el) => {
+    if (!el.contains(wrapper)) el.remove();
+  });
+  document.body.classList.remove('search-docked');
+
+  // ---- build the clone -------------------------------------------------------------------------
+  const dock = bar.cloneNode(true);
+  dock.setAttribute('data-search-dock-clone', ''); // identity — what makes it safe to remove
+  dock.setAttribute('data-search-dock', 'idle'); // state — what CSS styles
+  // Duplicate ids are invalid and would break getElementById / label[for] on the REAL search, which
+  // must keep working. Drop them from the copy; it's addressed by [data-search-dock] instead.
+  dock.removeAttribute('id');
+  dock.querySelectorAll('[id]').forEach((el) => el.removeAttribute('id'));
+  dock.querySelectorAll('[for]').forEach((el) => el.removeAttribute('for'));
+  // strip effect hooks so a later init pass can't re-run them on the copy (initButton056 would
+  // split the already-split label a second time)
+  dock.querySelectorAll('[data-button-056]').forEach((el) => el.removeAttribute('data-button-056'));
+  document.body.appendChild(dock);
+
+  const fieldSel = 'input:not([type="submit"]):not([type="hidden"]), textarea, select';
+  const clickSel = 'a, button, input[type="submit"]';
+  const srcField = bar.querySelector(fieldSel);
+  const dockField = dock.querySelector(fieldSel);
+  // index-matched so the copy's button maps to the original's without depending on class names
+  const srcClicks = Array.from(bar.querySelectorAll(clickSel));
+  const dockClicks = Array.from(dock.querySelectorAll(clickSel));
+
+  // never let the copy submit natively — the original owns what "search" means
+  if (dock.tagName.toLowerCase() === 'form') {
+    dock.addEventListener('submit', (e) => e.preventDefault());
+  }
+
+  const forward = () => {
+    if (!srcField || !dockField) return;
+    srcField.value = dockField.value;
+    // let whatever listens on the real input react to the value it's about to be asked to act on
+    srcField.dispatchEvent(new Event('input', { bubbles: true }));
+    srcField.dispatchEvent(new Event('change', { bubbles: true }));
+  };
+
+  dockClicks.forEach((el, i) => {
+    el.addEventListener('click', (e) => {
+      e.preventDefault();
+      forward();
+      (srcClicks[i] || srcClicks[0])?.click(); // hand off to the real button
+    });
+  });
+
+  dockField?.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    forward();
+    (srcClicks[0] || srcField)?.click();
+  });
+
+  // ---- dock / undock ---------------------------------------------------------------------------
+  let docked = false;
+  let tween;
+
+  // Exact px that puts the bar's top edge on the bottom of the viewport, i.e. fully off-screen.
+  // Measured rather than assumed (yPercent:100 would leave it peeking by whatever bottom offset the
+  // CSS uses), and CSS-agnostic — restyle the docked position and the slide still starts off-screen.
+  // Subtracts any transform already applied so it stays correct if called mid-slide.
+  const offScreenY = () => {
+    const currentY = parseFloat(gsap.getProperty(dock, 'y')) || 0;
+    const restTop = dock.getBoundingClientRect().top - currentY;
+    return window.innerHeight - restTop;
+  };
+
+  const show = () => {
+    if (docked) return;
+    docked = true;
+
+    if (srcField && dockField) dockField.value = srcField.value; // carry a typed query across
+    dock.setAttribute('data-search-dock', 'docked');
+    document.body.classList.add('search-docked');
+
+    tween?.kill();
+    // pure slide up from below the screen edge — no fade.
+    // ease omitted on purpose: gsap.defaults in index.js makes 'osmo' the default.
+    tween = gsap.fromTo(dock, { y: offScreenY() }, { y: 0, duration: reduced ? 0 : duration });
+  };
+
+  const hide = () => {
+    if (!docked) return;
+    docked = false;
+
+    if (srcField && dockField) srcField.value = dockField.value; // hand a typed query back
+    tween?.kill();
+    tween = gsap.to(dock, {
+      y: offScreenY(),
+      duration: reduced ? 0 : duration * 0.8,
+      onComplete() {
+        // state flips back only once it's off-screen, so CSS keeps it pinned — and the neutralised
+        // z-indexes stay neutralised — for the whole slide-out, instead of the dock being covered
+        // or vanishing halfway through its exit
+        dock.setAttribute('data-search-dock', 'idle');
+        document.body.classList.remove('search-docked');
+        gsap.set(dock, { clearProps: 'transform' });
+      },
+    });
+  };
+
+  // Docking is tied to the SECTION leaving/re-entering view, not the search's own box — so the bar
+  // appears once you've left the whole hero, not the moment the input scrolls off. Override with a
+  // selector in data-search-dock-trigger (resolved as an ancestor first, then document-wide).
+  const triggerSel = wrapper.getAttribute('data-search-dock-trigger');
+  const trigger =
+    (triggerSel && (wrapper.closest(triggerSel) || document.querySelector(triggerSel))) ||
+    wrapper.closest('section') ||
+    wrapper;
+
+  // Should the dock be up RIGHT NOW, judged from live geometry rather than from remembered state?
+  // Mirrors the ScrollTrigger start below: the trigger's bottom edge is `offset` px above the top
+  // of the viewport.
+  const shouldDock = () => trigger.getBoundingClientRect().bottom < -offset;
+
+  // Reconcile state with reality. Both show/hide are guarded, so calling this repeatedly is free.
+  const syncDockState = () => (shouldDock() ? show() : hide());
+
+  ScrollTrigger.create({
+    trigger,
+    start: `bottom top-=${offset}`,
+    onEnter: show,
+    onLeaveBack: hide,
+    // ScrollTrigger recalculates start/end on refresh but does NOT re-fire onEnter/onLeaveBack, so
+    // a layout change alone can leave the dock contradicting the page: resize a phone-width window
+    // (tall hero, scrolled past → docked) up to desktop (short hero, now back inside it) and the bar
+    // stays pinned over the hero. Refresh fires on resize, font load and ScrollTrigger.refresh().
+    onRefresh: syncDockState,
+  });
+
+  // Loading already scrolled past the section is the same problem: a trigger whose start is already
+  // behind you never fires onEnter.
+  syncDockState();
+}
+
+// -----------------------------------------
+// SEARCH SUGGESTIONS — [data-suggestion-item]
+// -----------------------------------------
+// Click (or Enter/Space) a suggestion tag → its text lands in the search input.
+//
+// Bound by DELEGATION on document, deliberately: the suggestions are CMS-rendered, and the search
+// dock clones its bar into <body> — so a per-element pass would have to run after the clone exists
+// and again after any CMS re-render. One document listener covers every copy, present and future,
+// and survives barba without re-binding.
+//
+// Which input gets filled: the one inside the SAME search block as the tag you clicked — the
+// docked copy if you clicked a tag in the dock, the hero one otherwise — falling back to the page's
+// [data-search-wrapper]. The dock already syncs values with the original when it shows/hides, so
+// filling either one carries across.
+//
+// Value = data-suggestion-item's own value if set (use it for a CMS slug that differs from the
+// visible label), else the tag's text.
+let suggestionsBound = false;
+export function initSearchSuggestions(scope = document) {
+  // Keyboard access: these are <div role="listitem">, so without a tabindex they can't be reached
+  // at all. Idempotent, so it's safe to re-run for CMS-rendered or cloned tags.
+  scope.querySelectorAll('[data-suggestion-item]').forEach((item) => {
+    if (!item.hasAttribute('tabindex')) item.setAttribute('tabindex', '0');
+  });
+
+  if (suggestionsBound) return;
+  suggestionsBound = true;
+
+  const fieldSel = 'input:not([type="submit"]):not([type="hidden"]), textarea';
+
+  const apply = (item) => {
+    const root =
+      item.closest('[data-search-dock-clone]') ||
+      item.closest('[data-search-wrapper]') ||
+      document.querySelector('[data-search-wrapper]');
+    const input = root?.querySelector(fieldSel);
+    if (!input) return;
+
+    const attr = item.getAttribute('data-suggestion-item');
+    input.value = (attr && attr.trim()) || item.textContent.trim();
+
+    // let anything listening on the input (validation, the search itself) see the new value —
+    // assigning .value directly never fires these on its own
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    input.focus();
+  };
+
+  document.addEventListener('click', (e) => {
+    const item = e.target.closest('[data-suggestion-item]');
+    if (item) apply(item);
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const item = e.target.closest('[data-suggestion-item]');
+    if (!item) return;
+    e.preventDefault(); // stop Space scrolling the page
+    apply(item);
+  });
+}
