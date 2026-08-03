@@ -1817,6 +1817,33 @@ export function initBackToTop() {
   });
 }
 
+// Remove a dock left behind by a previous barba page. MUST run on every navigation, not only when
+// the incoming page has a search: the clone lives on <body>, outside the container, so a page
+// without a [data-search-wrapper] never cleaned it up and the home page's dock (and its suggestion
+// tags, which then kept matching document-wide queries) leaked onto every later page.
+//
+// Matches the CLONE-IDENTITY attribute, never the state attribute: state is cosmetic and could
+// plausibly end up on the real search, and "remove everything with that attribute" would then
+// delete the actual form. Extra belt: never remove something containing a real search.
+// The idle clone must be invisible WITHOUT relying on CSS being added in Webflow. Without this it
+// sits at the end of <body> as ordinary content — i.e. visible at the bottom of every page, which
+// is exactly how a leaked dock shows up. Scoped to [data-search-dock="idle"] so the docked state is
+// left entirely to your CSS (no display fighting a flex/grid rule you set there).
+function injectSearchDockCSS() {
+  if (document.getElementById('search-dock-css')) return;
+  const style = document.createElement('style');
+  style.id = 'search-dock-css';
+  style.textContent = '[data-search-dock-clone][data-search-dock="idle"]{display:none}';
+  document.head.appendChild(style);
+}
+
+export function cleanupSearchDock() {
+  document.querySelectorAll('body > [data-search-dock-clone]').forEach((el) => {
+    if (!el.querySelector('[data-search-wrapper]')) el.remove();
+  });
+  document.body.classList.remove('search-docked');
+}
+
 // -----------------------------------------
 // SEARCH DOCK — [data-search-wrapper]
 // -----------------------------------------
@@ -1863,16 +1890,11 @@ export function initSearchDock(scope = document) {
   const duration = parseFloat(wrapper.getAttribute('data-search-dock-duration')) || 0.6;
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-  // A barba nav can leave the previous page's dock behind — it lives on <body>, outside the
-  // container. Match on the CLONE-IDENTITY attribute, never the state attribute: state is cosmetic
-  // and could plausibly end up on the real search, and "remove everything with that attribute"
-  // would then delete the actual form. Extra belt: never remove an element containing the original.
-  document.querySelectorAll('body > [data-search-dock-clone]').forEach((el) => {
-    if (!el.contains(wrapper)) el.remove();
-  });
-  document.body.classList.remove('search-docked');
+  cleanupSearchDock();
 
   // ---- build the clone -------------------------------------------------------------------------
+  injectSearchDockCSS();
+
   const dock = bar.cloneNode(true);
   dock.setAttribute('data-search-dock-clone', ''); // identity — what makes it safe to remove
   dock.setAttribute('data-search-dock', 'idle'); // state — what CSS styles
@@ -2063,5 +2085,120 @@ export function initSearchSuggestions(scope = document) {
     if (!item) return;
     e.preventDefault(); // stop Space scrolling the page
     apply(item);
+  });
+}
+
+// -----------------------------------------
+// SEARCH ACTION — what "Find vendors" actually does
+// -----------------------------------------
+// The search must NEVER submit as a form. Every submit attempt inside the search (Enter key, an
+// accidental submit input, Webflow's own form handler) is killed and replaced with a redirect to
+// the search app.
+//
+// Attrs on [data-search-wrapper] — the destination is NOT hardcoded here; both of these are
+// required and the search simply won't navigate without them (a default URL baked into the bundle
+// is a second place the truth lives, and it silently keeps working after someone removes the attr):
+//   data-search-action  base URL, e.g. https://app.modernvivo.com/marketplace/new_search
+//   data-search-param   query key, e.g. "query"
+//   data-search-target  "_blank" to open in a new tab (def same tab)
+//   data-search-submit  put this on the "Find vendors" button; falls back to the first
+//                       <a>/<button>/submit inside the search if absent
+//
+// The URL is assembled with URLSearchParams rather than string concatenation, so a query with &, #,
+// spaces or non-ASCII is encoded correctly instead of truncating the URL.
+let searchSubmitKilled = false;
+
+// Kill form submission for the search anywhere on the page — including the dock clone.
+// Bound on DOCUMENT in the CAPTURE phase on purpose: Webflow binds its own jQuery submit handler
+// directly on the form, and at the target element listeners run in registration order regardless of
+// phase, so a listener on the form itself could run after Webflow's. Capturing on an ancestor is
+// the only placement guaranteed to run first.
+function killSearchSubmit() {
+  if (searchSubmitKilled) return;
+  searchSubmitKilled = true;
+
+  document.addEventListener(
+    'submit',
+    (e) => {
+      const inSearch =
+        e.target.closest?.('[data-search-wrapper]') || e.target.closest?.('[data-search-dock-clone]');
+      if (!inSearch) return;
+      e.preventDefault();
+      e.stopImmediatePropagation(); // stop Webflow's handler from ever seeing it
+    },
+    true
+  );
+}
+
+export function initSearchAction(scope = document) {
+  killSearchSubmit();
+
+  const wrapper = scope.querySelector('[data-search-wrapper]');
+  if (!wrapper || wrapper.__searchAction) return;
+  wrapper.__searchAction = true;
+
+  const input = wrapper.querySelector('input:not([type="submit"]):not([type="hidden"])');
+  if (!input) return;
+
+  const go = () => {
+    const query = input.value.trim();
+    if (!query) {
+      input.focus(); // nothing to search for — don't navigate to an empty result set
+      return;
+    }
+
+    const base = wrapper.getAttribute('data-search-action');
+    const param = wrapper.getAttribute('data-search-param');
+    const target = wrapper.getAttribute('data-search-target');
+
+    // say so rather than failing mutely — a search button that does nothing is otherwise
+    // indistinguishable from a broken script
+    if (!base || !param) {
+      console.warn(
+        '[search] missing ' +
+          (!base ? 'data-search-action' : '') +
+          (!base && !param ? ' and ' : '') +
+          (!param ? 'data-search-param' : '') +
+          ' on [data-search-wrapper] — nowhere to send the query',
+        wrapper
+      );
+      return;
+    }
+
+    let url;
+    try {
+      url = new URL(base, window.location.href);
+    } catch (err) {
+      console.warn('[search] data-search-action is not a valid URL:', base);
+      return;
+    }
+    url.searchParams.set(param, query);
+
+    const href = url.toString();
+
+    if (target === '_blank') {
+      window.open(href, '_blank', 'noopener');
+    } else {
+      window.location.href = href;
+    }
+  };
+
+  // expose it so the docked clone's forwarding ends up here too, and so it can be fired manually
+  wrapper.__searchGo = go;
+
+  const trigger =
+    wrapper.querySelector('[data-search-submit]') ||
+    wrapper.querySelector('a, button, input[type="submit"]');
+  trigger?.addEventListener('click', (e) => {
+    e.preventDefault(); // the button is an <a href="#"> — never let it jump to the top of the page
+    go();
+  });
+
+  // Enter anywhere in the search. The submit killer above already stops the form submitting, so
+  // this is what gives Enter the same behaviour as the button rather than doing nothing at all.
+  wrapper.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || e.target.tagName === 'TEXTAREA') return;
+    e.preventDefault();
+    go();
   });
 }

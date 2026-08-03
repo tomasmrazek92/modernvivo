@@ -19,13 +19,17 @@ import {
   initIndustryReveal,
   initNavMenu,
   initNavReveal,
+  cleanupSearchDock,
+  initSearchAction,
   initSearchDock,
   initSearchSuggestions,
   initStackingCardsParallax,
   initStickyStepsFlip,
 } from './animations.js';
+import { initAnchorLinks, initHeadingAnchors } from './anchors.js';
 import { initCalendly } from './calendly.js';
-import { initResourcesFilter } from './filters.js';
+import { initFilterShortcuts, initResourcesFilter } from './filters.js';
+import { initFormTriggers } from './forms.js';
 import { initHero } from './hero.js';
 
 gsap.registerPlugin(CustomEase, ScrollTrigger, SplitText);
@@ -46,6 +50,18 @@ rmMQ.addListener?.((e) => (reducedMotion = e.matches));
 
 const has = (s) => !!nextPage.querySelector(s);
 
+// Run one init in isolation. Without this the registry is a single statement chain: ONE init that
+// throws takes every init AFTER it down with it, silently — which reads as "that feature just
+// doesn't run on this page" with nothing obviously wrong at the feature itself. Ordering should
+// never be load-bearing, so a failure is contained and named instead.
+function run(name, fn) {
+  try {
+    fn();
+  } catch (err) {
+    console.error(`[init] ${name} failed — later inits still ran`, err);
+  }
+}
+
 let staggerDefault = 0.05;
 let durationDefault = 0.6;
 
@@ -64,26 +80,31 @@ function initOnceFunctions() {
   // Runs once on first load. NOTE: nav + copy-email live in persistent regions (nav/footer) that sit
   // OUTSIDE the barba container, so their gate must query `document` — `has()` (container-scoped)
   // would miss them. The inits themselves already scan `document` here.
-  if (document.querySelector('[data-nav-reveal]')) initNavReveal(document); // nav persists across barba — once only
-  if (document.querySelector('[data-nav="hamburger"]')) initNavMenu(document); // nav persists — once only
-  if (has('[data-shapefield]')) initHero(document);
-  if (has('[data-dotmap]')) initDotMap(nextPage);
-  if (has('[data-industry-reveal]')) initIndustryReveal(document);
-  if (has('[data-dotfield]')) initDotField(document);
-  if (has('[data-button-056]')) initButton056(document);
-  if (has('[data-reveal]')) initHeadingReveal(document);
-  if (has('[data-reveal-group]')) initContentRevealScroll(document);
-  if (has('[data-stacking-cards-item]')) initStackingCardsParallax(document);
-  if (has('[data-sticky-steps-init]')) initStickyStepsFlip(document);
-  if (has('[data-parallax="trigger"]')) initGlobalParallax(document);
-  if (has('[data-card-border]')) initCardBorderHover(document);
-  if (has('[data-search-wrapper]')) initSearchDock(document);
-  if (document.querySelector('[data-suggestion-item]')) initSearchSuggestions(document); // may sit in the dock clone on <body>
-  if (has('.resources-filter')) initResourcesFilter(nextPage);
-  if (has('[data-calendly]')) initCalendly(nextPage);
-  if (document.querySelector('[data-copy-email]')) initCopyEmail(document); // footer/persistent → document-scoped gate
-  if (document.querySelector('[data-css-marquee]')) initCSSMarquee(document); // marquee may live in footer
-  if (document.querySelector('[data-back-to-top="wrap"]')) initBackToTop(); // footer/persistent → document-scoped gate
+  if (document.querySelector('[data-nav-reveal]')) run('initNavReveal', () => initNavReveal(document)); // nav persists across barba — once only
+  if (document.querySelector('[data-nav="hamburger"]')) run('initNavMenu', () => initNavMenu(document)); // nav persists — once only
+  if (has('[data-shapefield]')) run('initHero', () => initHero(document));
+  if (has('[data-dotmap]')) run('initDotMap', () => initDotMap(nextPage));
+  if (has('[data-industry-reveal]')) run('initIndustryReveal', () => initIndustryReveal(document));
+  if (has('[data-dotfield]')) run('initDotField', () => initDotField(document));
+  if (has('[data-button-056]')) run('initButton056', () => initButton056(document));
+  if (has('[data-reveal]')) run('initHeadingReveal', () => initHeadingReveal(document));
+  if (has('[data-reveal-group]')) run('initContentRevealScroll', () => initContentRevealScroll(document));
+  if (has('[data-stacking-cards-item]')) run('initStackingCardsParallax', () => initStackingCardsParallax(document));
+  if (has('[data-sticky-steps-init]')) run('initStickyStepsFlip', () => initStickyStepsFlip(document));
+  if (has('[data-parallax="trigger"]')) run('initGlobalParallax', () => initGlobalParallax(document));
+  if (has('[data-card-border]')) run('initCardBorderHover', () => initCardBorderHover(document));
+  if (has('[data-search-wrapper]')) run('initSearchAction', () => initSearchAction(document));
+  if (has('[data-search-wrapper]')) run('initSearchDock', () => initSearchDock(document));
+  if (document.querySelector('[data-suggestion-item]')) run('initSearchSuggestions', () => initSearchSuggestions(document)); // may sit in the dock clone on <body>
+  if (has('.resources-filter')) run('initResourcesFilter', () => initResourcesFilter(nextPage));
+  if (has('.resources-filter')) run('initFilterShortcuts', initFilterShortcuts);
+  if (has('[data-calendly]')) run('initCalendly', () => initCalendly(nextPage));
+  if (has('[data-button-instance="form-trigger"]')) run('initFormTriggers', () => initFormTriggers(nextPage));
+  if (has('[data-anchors]')) run('initHeadingAnchors', () => initHeadingAnchors(nextPage));
+  run('initAnchorLinks', initAnchorLinks); // delegated on document — nav/footer links too, binds once
+  if (document.querySelector('[data-copy-email]')) run('initCopyEmail', () => initCopyEmail(document)); // footer/persistent → document-scoped gate
+  if (document.querySelector('[data-css-marquee]')) run('initCSSMarquee', () => initCSSMarquee(document)); // marquee may live in footer
+  if (document.querySelector('[data-back-to-top="wrap"]')) run('initBackToTop', () => initBackToTop()); // footer/persistent → document-scoped gate
 
   // reveals have set their own initial hidden state (inline) — safe to drop the CSS pre-hide gate
   document.documentElement.classList.add('reveal-ready');
@@ -103,26 +124,33 @@ function initAfterEnterFunctions(next) {
   nextPage = next || document;
 
   // Runs after enter animation completes
-  if (has('[data-shapefield]')) initHero(nextPage);
-  if (has('[data-dotmap]')) initDotMap(nextPage);
-  if (has('[data-industry-reveal]')) initIndustryReveal(nextPage);
-  if (has('[data-dotfield]')) initDotField(nextPage);
-  if (has('[data-button-056]')) initButton056(nextPage);
-  if (has('[data-reveal]')) initHeadingReveal(nextPage);
-  if (has('[data-reveal-group]')) initContentRevealScroll(nextPage);
-  if (has('[data-stacking-cards-item]')) initStackingCardsParallax(nextPage);
-  if (has('[data-sticky-steps-init]')) initStickyStepsFlip(nextPage);
-  if (has('[data-parallax="trigger"]')) initGlobalParallax(nextPage);
-  if (has('[data-card-border]')) initCardBorderHover(nextPage);
-  if (has('[data-search-wrapper]')) initSearchDock(nextPage);
-  if (document.querySelector('[data-suggestion-item]')) initSearchSuggestions(document);
-  if (has('.resources-filter')) initResourcesFilter(nextPage);
-  if (has('[data-calendly]')) initCalendly(nextPage);
-  if (has('[data-copy-email]')) initCopyEmail(nextPage);
-  if (has('[data-css-marquee]')) initCSSMarquee(nextPage);
+  if (has('[data-shapefield]')) run('initHero', () => initHero(nextPage));
+  if (has('[data-dotmap]')) run('initDotMap', () => initDotMap(nextPage));
+  if (has('[data-industry-reveal]')) run('initIndustryReveal', () => initIndustryReveal(nextPage));
+  if (has('[data-dotfield]')) run('initDotField', () => initDotField(nextPage));
+  if (has('[data-button-056]')) run('initButton056', () => initButton056(nextPage));
+  if (has('[data-reveal]')) run('initHeadingReveal', () => initHeadingReveal(nextPage));
+  if (has('[data-reveal-group]')) run('initContentRevealScroll', () => initContentRevealScroll(nextPage));
+  if (has('[data-stacking-cards-item]')) run('initStackingCardsParallax', () => initStackingCardsParallax(nextPage));
+  if (has('[data-sticky-steps-init]')) run('initStickyStepsFlip', () => initStickyStepsFlip(nextPage));
+  if (has('[data-parallax="trigger"]')) run('initGlobalParallax', () => initGlobalParallax(nextPage));
+  if (has('[data-card-border]')) run('initCardBorderHover', () => initCardBorderHover(nextPage));
+  // unconditional: a page WITHOUT a search still has to clear the previous page's dock
+  run('cleanupSearchDock', cleanupSearchDock);
+  if (has('[data-search-wrapper]')) run('initSearchAction', () => initSearchAction(nextPage));
+  if (has('[data-search-wrapper]')) run('initSearchDock', () => initSearchDock(nextPage));
+  if (document.querySelector('[data-suggestion-item]')) run('initSearchSuggestions', () => initSearchSuggestions(document));
+  if (has('.resources-filter')) run('initResourcesFilter', () => initResourcesFilter(nextPage));
+  if (has('.resources-filter')) run('initFilterShortcuts', initFilterShortcuts);
+  if (has('[data-calendly]')) run('initCalendly', () => initCalendly(nextPage));
+  if (has('[data-button-instance="form-trigger"]')) run('initFormTriggers', () => initFormTriggers(nextPage));
+  if (has('[data-anchors]')) run('initHeadingAnchors', () => initHeadingAnchors(nextPage));
+  run('initAnchorLinks', initAnchorLinks); // delegated on document — nav/footer links too, binds once
+  if (has('[data-copy-email]')) run('initCopyEmail', () => initCopyEmail(nextPage));
+  if (has('[data-css-marquee]')) run('initCSSMarquee', () => initCSSMarquee(nextPage));
   // footer-persistent: gate on document (has() is container-scoped). Re-run rebuilds the
   // ScrollTrigger that beforeEnter killed; the click handler is guarded against double-binding.
-  if (document.querySelector('[data-back-to-top="wrap"]')) initBackToTop();
+  if (document.querySelector('[data-back-to-top="wrap"]')) run('initBackToTop', () => initBackToTop());
 
   document.documentElement.classList.add('reveal-ready');
 }
@@ -397,14 +425,33 @@ function debounceOnWidthChange(fn, ms) {
   };
 }
 
+// Persistent regions (nav, footer) live OUTSIDE the barba container, so their markup stays whatever
+// the FIRST page rendered — Webflow's `w--current` never moves on a barba nav. Copy the incoming
+// page's own state onto the live nodes: mark links with `data-barba-update` in Webflow and their
+// class + aria-current are synced from the page being navigated to.
 function initBarbaNavUpdate(data) {
   var tpl = document.createElement('template');
   tpl.innerHTML = data.next.html.trim();
-  var nextNodes = tpl.content.querySelectorAll('[data-barba-update]');
-  var currentNodes = document.querySelectorAll('nav [data-barba-update]');
+
+  var SEL = '[data-barba-update]';
+  // Not scoped to `nav`: Webflow's Navbar renders a <div class="w-nav"> unless the tag is explicitly
+  // set to Nav, so a `nav ...` selector silently matches nothing and the whole sync no-ops. This
+  // also lets a footer or a breadcrumb opt in with the same attribute.
+  var nextNodes = Array.from(tpl.content.querySelectorAll(SEL));
+  var currentNodes = document.querySelectorAll(SEL);
+
+  // Match by href, not position. The two lists were previously index-matched against DIFFERENT
+  // scopes (live: `nav …`, incoming: whole document), so a single marked link outside the nav
+  // shifted every index and pinned the active class to the wrong item.
+  var byHref = new Map();
+  nextNodes.forEach(function (n) {
+    var href = n.getAttribute('href');
+    if (href && !byHref.has(href)) byHref.set(href, n);
+  });
 
   currentNodes.forEach(function (curr, index) {
-    var next = nextNodes[index];
+    var href = curr.getAttribute('href');
+    var next = (href && byHref.get(href)) || nextNodes[index]; // index only as a last resort
     if (!next) return;
 
     // Aria-current sync
