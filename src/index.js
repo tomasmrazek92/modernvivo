@@ -29,7 +29,8 @@ import {
 import { initAnchorLinks, initHeadingAnchors } from './anchors.js';
 import { initCalendly } from './calendly.js';
 import { initFilterShortcuts, initResourcesFilter } from './filters.js';
-import { initFormTriggers } from './forms.js';
+import { initFormTriggers, initLoopsForms } from './forms.js';
+import { initDodge } from './dodge.js';
 import { initHero } from './hero.js';
 
 gsap.registerPlugin(CustomEase, ScrollTrigger, SplitText);
@@ -100,10 +101,12 @@ function initOnceFunctions() {
   if (has('.resources-filter')) run('initFilterShortcuts', initFilterShortcuts);
   if (has('[data-calendly]')) run('initCalendly', () => initCalendly(nextPage));
   if (has('[data-button-instance="form-trigger"]')) run('initFormTriggers', () => initFormTriggers(nextPage));
+  run('initLoopsForms', () => initLoopsForms(document)); // listener binds once; re-stamps idle per page
   if (has('[data-anchors]')) run('initHeadingAnchors', () => initHeadingAnchors(nextPage));
   run('initAnchorLinks', initAnchorLinks); // delegated on document — nav/footer links too, binds once
   if (document.querySelector('[data-copy-email]')) run('initCopyEmail', () => initCopyEmail(document)); // footer/persistent → document-scoped gate
   if (document.querySelector('[data-css-marquee]')) run('initCSSMarquee', () => initCSSMarquee(document)); // marquee may live in footer
+  if (document.querySelector('[data-dodge], .footer-bottom-figure')) run('initDodge', () => initDodge(document)); // footer figure — persistent region
   if (document.querySelector('[data-back-to-top="wrap"]')) run('initBackToTop', () => initBackToTop()); // footer/persistent → document-scoped gate
 
   // reveals have set their own initial hidden state (inline) — safe to drop the CSS pre-hide gate
@@ -144,10 +147,12 @@ function initAfterEnterFunctions(next) {
   if (has('.resources-filter')) run('initFilterShortcuts', initFilterShortcuts);
   if (has('[data-calendly]')) run('initCalendly', () => initCalendly(nextPage));
   if (has('[data-button-instance="form-trigger"]')) run('initFormTriggers', () => initFormTriggers(nextPage));
+  run('initLoopsForms', () => initLoopsForms(document)); // listener binds once; re-stamps idle per page
   if (has('[data-anchors]')) run('initHeadingAnchors', () => initHeadingAnchors(nextPage));
   run('initAnchorLinks', initAnchorLinks); // delegated on document — nav/footer links too, binds once
   if (has('[data-copy-email]')) run('initCopyEmail', () => initCopyEmail(nextPage));
   if (has('[data-css-marquee]')) run('initCSSMarquee', () => initCSSMarquee(nextPage));
+  if (document.querySelector('[data-dodge], .footer-bottom-figure')) run('initDodge', () => initDodge(document));
   // footer-persistent: gate on document (has() is container-scoped). Re-run rebuilds the
   // ScrollTrigger that beforeEnter killed; the click handler is guarded against double-binding.
   if (document.querySelector('[data-back-to-top="wrap"]')) run('initBackToTop', () => initBackToTop());

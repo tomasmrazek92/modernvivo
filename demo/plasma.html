@@ -1,0 +1,399 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ModernVivo — Plasma (real artwork)</title>
+<style>
+  * { box-sizing:border-box; }
+  body { margin:0; background:#F4F4D0; color:#17003F;
+    font-family:'Inter',system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+  .page { max-width:1500px; margin:0 auto; padding:24px 24px 60px; }
+  header { display:flex; flex-wrap:wrap; align-items:flex-end; justify-content:space-between;
+    gap:16px; padding-bottom:10px; border-bottom:1px solid rgba(23,0,63,.15); }
+  h1 { font-size:24px; margin:0 0 4px; }
+  .sub { color:#5b5478; max-width:78ch; line-height:1.5; font-size:13px; margin:0; }
+  .fps { font-family:ui-monospace,Menlo,monospace; font-size:13px; color:#5b5478; background:#fff;
+    border:1px solid rgba(23,0,63,.15); padding:6px 12px; border-radius:8px; white-space:nowrap; }
+  .layout { display:grid; grid-template-columns:1fr 250px; gap:24px; margin-top:18px;
+    align-items:start; }
+  @media (max-width:900px){ .layout{ grid-template-columns:1fr; } }
+  .stage { position:relative; border:1px solid rgba(23,0,63,.15); border-radius:12px;
+    overflow:hidden; height:72vh; min-height:500px; cursor:crosshair; background:#F4F4D0; }
+  .stage.dark { background:#17003F; }
+  .stage canvas, .stage .ref { position:absolute; inset:0; width:100%; height:100%; }
+  .stage .ref { display:none; align-items:center; justify-content:center; pointer-events:none; }
+  .stage.compare .ref { display:flex; opacity:.5; }
+  .stage .ref svg { width:100%; height:100%; }
+  .panel { position:sticky; top:20px; background:#fff; border:1px solid rgba(23,0,63,.12);
+    border-radius:12px; padding:14px; max-height:92vh; overflow:auto; }
+  .panel h2 { font-size:11px; text-transform:uppercase; letter-spacing:.08em; margin:14px 0 6px;
+    color:#5b5478; }
+  .panel h2:first-child { margin-top:0; }
+  .row { margin-bottom:8px; }
+  .row label { display:flex; justify-content:space-between; font-size:11px; margin-bottom:2px;
+    font-family:ui-monospace,Menlo,monospace; }
+  .row label b { font-weight:600; color:#8D04FD; }
+  .row input[type=range] { width:100%; }
+  .toggles { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:10px; }
+  .toggles label { font-size:12px; display:flex; align-items:center; gap:5px; }
+  button { font:inherit; font-size:12px; color:#fff; background:#8D04FD; border:0;
+    padding:8px 14px; border-radius:999px; cursor:pointer; font-weight:600; }
+  button.ghost { background:transparent; color:#5b5478; border:1px solid rgba(23,0,63,.2); }
+  .out { margin-top:10px; font-family:ui-monospace,Menlo,monospace; font-size:10px;
+    background:#F4F4D0; border-radius:8px; padding:8px; word-break:break-all; line-height:1.5; }
+  .paste { margin-top:20px; }
+  textarea { width:100%; height:90px; font-family:ui-monospace,Menlo,monospace; font-size:11px;
+    border:1px solid rgba(23,0,63,.2); border-radius:8px; padding:8px; }
+  .warn { color:#b00; font-size:13px; }
+</style>
+</head>
+<body>
+<div class="page">
+  <header>
+    <div>
+      <h1>Plasma — the real artwork, reaching</h1>
+      <p class="sub">Every shape is drawn from its own path data, so <b>at rest this is pixel-identical
+        to the SVG</b>. The plasma behaviour is displacement on top: arms nearest the cursor reach for
+        it and crackle. Tick <b>compare</b> to overlay the original SVG at 50% and check drift.</p>
+    </div>
+    <div class="fps" id="fps">— fps</div>
+  </header>
+
+  <div class="layout">
+    <div class="stage" id="stage">
+      <div class="ref" id="ref"></div>
+      <canvas id="cv"></canvas>
+    </div>
+    <div class="panel">
+      <div class="toggles">
+        <label><input type="checkbox" id="compare"> compare</label>
+        <label><input type="checkbox" id="dark"> dark bg</label>
+        <label><input type="checkbox" id="freeze"> freeze</label>
+      </div>
+      <div id="sliders"></div>
+      <button id="copy">Copy settings</button>
+      <button class="ghost" id="reset">Reset</button>
+      <div class="out" id="out"></div>
+    </div>
+  </div>
+
+  <div class="paste" id="pasteBox">
+    <textarea id="svgin" placeholder="Paste the footer-bottom-map-1 SVG (shared with organism.html — if you already pasted it there, it's loaded)"></textarea>
+    <button id="load">Load SVG</button>
+    <button class="ghost" id="forget">Forget saved SVG</button>
+    <span id="status"></span>
+  </div>
+</div>
+
+<script type="module">
+// ---------------------------------------------------------------------------------------------
+// Plasma on the REAL artwork.
+//
+// The previous pass replaced the mark with procedurally generated filaments — wrong. Here every
+// shape keeps its own Path2D taken from the SVG's own subpath `d`, so the rest state is the
+// artwork exactly: same positions, radii, silhouettes, colours, including the pink triangles.
+// The effect is purely a per-shape displacement drawn on top of that.
+//
+// Structure comes from the artwork too: shapes that touch are linked, and a BFS out from the
+// centre gives every shape a depth 0…1. Depth is what makes reaching read as organic — roots stay
+// put, tips commit — instead of the whole mass sliding.
+// ---------------------------------------------------------------------------------------------
+
+const CFG = {
+  radius:   { v: 240, min: 40, max: 900, step: 5,   label: 'cursor radius' },
+  reach:    { v: 1,   min: 0,  max: 3,   step: .05, label: 'reach strength' },
+  grab:     { v: 2,   min: .5, max: 6,   step: .1,  label: 'how many arms grab' },
+  tipBias:  { v: 2,   min: 0,  max: 4,   step: .1,  label: 'tip vs root bias' },
+  cohesion: { v: .5,  min: 0,  max: 1,   step: .01, label: 'arm cohesion' },
+  crackle:  { v: .6,  min: 0,  max: 3,   step: .01, label: 'crackle' },
+  writhe:   { v: .5,  min: 0,  max: 3,   step: .01, label: 'idle writhe' },
+  speed:    { v: 1,   min: 0,  max: 3,   step: .01, label: 'idle speed' },
+  ease:     { v: 1,   min: .1, max: 4,   step: .05, label: 'attach speed' },
+};
+
+const KEY = 'mv:organism:svg';                     // shared with organism.html — paste once, ever
+const stage = document.getElementById('stage');
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+const refHost = document.getElementById('ref');
+
+let shapes = [];        // {path, cx, cy, fill, depth, nbrs, dx, dy, vx, vy}
+let vb = { w: 0, h: 0 };
+let centre = { x: 0, y: 0 };
+let W = 0, H = 0, DPR = 1, fit = 1, offX = 0, offY = 0;
+
+// ---- parse the artwork ------------------------------------------------------------------------
+function parse(markup) {
+  const holder = document.createElement('div');
+  holder.style.cssText = 'position:absolute;width:0;height:0;overflow:hidden;opacity:0';
+  holder.innerHTML = markup;
+  document.body.appendChild(holder);
+  const svg = holder.querySelector('svg');
+  if (!svg) { holder.remove(); return false; }
+
+  const box = svg.viewBox.baseVal;
+  vb = { w: box.width || 435, h: box.height || 352 };
+
+  const NS = 'http://www.w3.org/2000/svg';
+  shapes = [];
+  svg.querySelectorAll('path').forEach((p) => {
+    const d = p.getAttribute('d') || '';
+    const fill = p.getAttribute('fill') || '#000';
+    // one entry per subpath — Figma exports each circle/triangle as its own M…Z run
+    (d.match(/[Mm][^Mm]*/g) || []).forEach((sd) => {
+      const probe = document.createElementNS(NS, 'path');
+      probe.setAttribute('d', sd);
+      svg.appendChild(probe);
+      let b;
+      try { b = probe.getBBox(); } catch (e) { b = null; }
+      probe.remove();
+      if (!b || !b.width) return;
+      shapes.push({
+        path: new Path2D(sd),                    // exact silhouette, not an approximation
+        cx: b.x + b.width / 2,
+        cy: b.y + b.height / 2,
+        r: (b.width + b.height) / 4,
+        fill,
+        dx: 0, dy: 0, vx: 0, vy: 0,
+        depth: 0, nbrs: [],
+      });
+    });
+  });
+
+  refHost.innerHTML = markup;                     // keep the original for the compare overlay
+  holder.remove();
+  if (!shapes.length) return false;
+
+  buildStructure();
+  return true;
+}
+
+// Link touching shapes, then BFS from the centre so every shape knows how far out along an arm it
+// sits. That depth is the whole reason the reach reads as organic rather than as a slide.
+function buildStructure() {
+  let sx = 0, sy = 0;
+  shapes.forEach((s) => { sx += s.cx; sy += s.cy; });
+  centre = { x: sx / shapes.length, y: sy / shapes.length };
+
+  for (let i = 0; i < shapes.length; i++) {
+    for (let j = i + 1; j < shapes.length; j++) {
+      const a = shapes[i], b = shapes[j];
+      const touch = (a.r + b.r) * 1.45;
+      if ((a.cx - b.cx) ** 2 + (a.cy - b.cy) ** 2 < touch * touch) {
+        a.nbrs.push(j); b.nbrs.push(i);
+      }
+    }
+  }
+
+  // seed BFS at the shape closest to the centroid
+  let seed = 0, best = Infinity;
+  shapes.forEach((s, i) => {
+    const d = (s.cx - centre.x) ** 2 + (s.cy - centre.y) ** 2;
+    if (d < best) { best = d; seed = i; }
+  });
+
+  shapes.forEach((s) => (s.depth = -1));
+  const q = [seed];
+  shapes[seed].depth = 0;
+  let maxD = 0;
+  while (q.length) {
+    const i = q.shift();
+    const d = shapes[i].depth;
+    maxD = Math.max(maxD, d);
+    shapes[i].nbrs.forEach((j) => {
+      if (shapes[j].depth < 0) { shapes[j].depth = d + 1; q.push(j); }
+    });
+  }
+  // isolated shapes (the pink triangles touch nothing) fall back to radial distance
+  const maxR = Math.max(...shapes.map((s) => Math.hypot(s.cx - centre.x, s.cy - centre.y)));
+  shapes.forEach((s) => {
+    s.t = s.depth >= 0 && maxD > 0
+      ? s.depth / maxD
+      : Math.hypot(s.cx - centre.x, s.cy - centre.y) / (maxR || 1);
+  });
+}
+
+// ---- layout ------------------------------------------------------------------------------------
+function resize() {
+  const r = stage.getBoundingClientRect();
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = r.width; H = r.height;
+  cv.width = Math.round(W * DPR);
+  cv.height = Math.round(H * DPR);
+  // contain, matching how the <svg> with width:100%;height:100% is laid out for the overlay
+  fit = Math.min(W / vb.w, H / vb.h);
+  offX = (W - vb.w * fit) / 2;
+  offY = (H - vb.h * fit) / 2;
+}
+new ResizeObserver(resize).observe(stage);
+
+const P = { x: 0, y: 0, tx: 0, ty: 0, inside: false };
+stage.addEventListener('pointermove', (e) => {
+  const r = stage.getBoundingClientRect();
+  P.tx = (e.clientX - r.left - offX) / fit;      // into artwork units
+  P.ty = (e.clientY - r.top - offY) / fit;
+  P.inside = true;
+});
+stage.addEventListener('pointerleave', () => (P.inside = false));
+
+// QA hook: module scope is private, so expose state for measurement from devtools/tooling
+window.__plasma = { get shapes(){return shapes}, get centre(){return centre}, CFG, P, get fit(){return fit} };
+
+const n1 = (x) => Math.sin(x) * .6 + Math.sin(x * 2.3 + 1.7) * .3 + Math.sin(x * 4.7 + 3.1) * .1;
+
+// ---- frame ---------------------------------------------------------------------------------------
+let frames = 0, last = performance.now();
+function frame(tms) {
+  const t = tms / 1000;
+  const g = (k) => CFG[k].v;
+  const dark = document.getElementById('dark').checked;
+  const frozen = document.getElementById('freeze').checked;
+  stage.classList.toggle('dark', dark);
+  stage.classList.toggle('compare', document.getElementById('compare').checked);
+
+  P.x += (P.tx - P.x) * .25;
+  P.y += (P.ty - P.y) * .25;
+
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  ctx.setTransform(DPR * fit, 0, 0, DPR * fit, DPR * offX, DPR * offY);
+
+  const R = g('radius') / fit;                     // cursor radius in artwork units
+  const pAng = Math.atan2(P.y - centre.y, P.x - centre.x);
+
+  for (let i = 0; i < shapes.length; i++) {
+    const s = shapes[i];
+    let tx = 0, ty = 0;
+
+    if (!frozen) {
+      // idle: sway perpendicular to the arm, growing toward the tips
+      const sway = n1(i * 0.7 + t * g('speed')) * g('writhe') * s.t * 1.6;
+      const ang = Math.atan2(s.cy - centre.y, s.cx - centre.x) + Math.PI / 2;
+      tx += Math.cos(ang) * sway;
+      ty += Math.sin(ang) * sway;
+
+      if (P.inside) {
+        const dx = P.x - s.cx, dy = P.y - s.cy;
+        const d = Math.hypot(dx, dy);
+        if (d < R && d > .001) {
+          // which arms grab: how well this shape's direction from centre lines up with the cursor's
+          let dA = Math.atan2(s.cy - centre.y, s.cx - centre.x) - pAng;
+          while (dA > Math.PI) dA -= Math.PI * 2;
+          while (dA < -Math.PI) dA += Math.PI * 2;
+          const lobe = Math.max(0, 1 - Math.abs(dA) / (Math.PI / g('grab')));
+          const falloff = (1 - d / R) ** 1.4;
+          const bias = Math.pow(s.t, g('tipBias'));   // roots stay, tips commit
+          const pull = g('reach') * lobe * falloff * bias * 26;
+          tx += (dx / d) * pull;
+          ty += (dy / d) * pull;
+
+          if (lobe > .05) {
+            const cr = g('crackle') * lobe * bias;
+            tx += n1(i * 3.1 + t * 55) * cr;
+            ty += n1(i * 5.7 + t * 61) * cr;
+          }
+        }
+      }
+    }
+
+    // spring toward the target displacement — never a hard set, so it eases in and releases
+    const k = .18 * g('ease');
+    s.vx = (s.vx + (tx - s.dx) * k) * .78;
+    s.vy = (s.vy + (ty - s.dy) * k) * .78;
+    s.dx += s.vx;
+    s.dy += s.vy;
+    if (!Number.isFinite(s.dx) || !Number.isFinite(s.dy)) { s.dx = s.dy = s.vx = s.vy = 0; }
+  }
+
+  // cohesion: relax each shape toward its neighbours' displacement so arms travel as one piece
+  const coh = CFG.cohesion.v;
+  if (coh > 0 && !frozen) {
+    for (let i = 0; i < shapes.length; i++) {
+      const s = shapes[i];
+      if (!s.nbrs.length) continue;
+      let ax = 0, ay = 0;
+      for (const j of s.nbrs) { ax += shapes[j].dx; ay += shapes[j].dy; }
+      s.dx += (ax / s.nbrs.length - s.dx) * coh * .35;
+      s.dy += (ay / s.nbrs.length - s.dy) * coh * .35;
+    }
+  }
+
+  // draw — each shape's own Path2D, translated. Rest state is the artwork, exactly.
+  for (const s of shapes) {
+    ctx.save();
+    ctx.translate(s.dx, s.dy);
+    ctx.fillStyle = s.fill;
+    ctx.fill(s.path);
+    ctx.restore();
+  }
+
+  frames++;
+  const now = performance.now();
+  if (now - last >= 500) {
+    document.getElementById('fps').textContent =
+      `${Math.round(frames * 1000 / (now - last))} fps · ${shapes.length} shapes`;
+    frames = 0; last = now;
+  }
+  requestAnimationFrame(frame);
+}
+
+// ---- UI ------------------------------------------------------------------------------------------
+const host = document.getElementById('sliders');
+Object.entries(CFG).forEach(([key, c]) => {
+  const row = document.createElement('div');
+  row.className = 'row';
+  row.innerHTML = `<label>${c.label}<b id="v_${key}">${c.v}</b></label>` +
+    `<input type="range" id="s_${key}" min="${c.min}" max="${c.max}" step="${c.step}" value="${c.v}">`;
+  host.appendChild(row);
+  row.querySelector('input').addEventListener('input', (e) => {
+    c.v = parseFloat(e.target.value);
+    document.getElementById('v_' + key).textContent = c.v;
+    writeOut();
+  });
+});
+function writeOut() {
+  document.getElementById('out').textContent =
+    JSON.stringify(Object.fromEntries(Object.entries(CFG).map(([k, c]) => [k, c.v])));
+}
+writeOut();
+document.getElementById('copy').addEventListener('click', () =>
+  navigator.clipboard.writeText(document.getElementById('out').textContent));
+document.getElementById('reset').addEventListener('click', () => location.reload());
+
+document.getElementById('load').addEventListener('click', () => {
+  const m = document.getElementById('svgin').value.trim();
+  if (!m) return;
+  localStorage.setItem(KEY, m);
+  location.reload();
+});
+document.getElementById('forget').addEventListener('click', () => {
+  localStorage.removeItem(KEY);
+  location.reload();
+});
+
+// Prefer the artwork on disk — that makes the page reproducible for anyone (and screenshot-able
+// by tooling, which a localStorage-only copy is not). Falls back to the pasted copy.
+async function boot() {
+  let markup = null;
+  try {
+    const res = await fetch('shapes/footer-map-1.svg');
+    if (res.ok) markup = await res.text();
+  } catch (e) { /* file:// or not present — fall through */ }
+  if (!markup) markup = localStorage.getItem(KEY);
+  return markup;
+}
+
+const saved = await boot();
+const status = document.getElementById('status');
+if (saved && parse(saved)) {
+  document.getElementById('svgin').value = saved;
+  status.textContent = ` loaded ${shapes.length} shapes`;
+  resize();
+  requestAnimationFrame(frame);
+} else {
+  status.innerHTML = ' <span class="warn">no SVG yet — paste it above</span>';
+}
+</script>
+</body>
+</html>
