@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ModernVivo — Loops newsletter form</title>
+<style>
+  * { box-sizing:border-box; }
+  body { margin:0; background:#F4F4D0; color:#17003F;
+    font-family:'Inter',system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+  .page { max-width:1100px; margin:0 auto; padding:32px 24px 80px; }
+  header { padding-bottom:12px; border-bottom:1px solid rgba(23,0,63,.15); }
+  h1 { font-size:28px; margin:0 0 4px; }
+  .sub { color:#5b5478; max-width:80ch; line-height:1.5; font-size:14px; margin:0; }
+  .layout { display:grid; grid-template-columns:1fr 340px; gap:32px; margin-top:24px; align-items:start; }
+  @media (max-width:900px){ .layout{ grid-template-columns:1fr; } }
+  .stage { background:#fff; border:1px solid rgba(23,0,63,.15); border-radius:12px; padding:40px; }
+  .panel { position:sticky; top:24px; background:#fff; border:1px solid rgba(23,0,63,.12);
+    border-radius:12px; padding:16px; }
+  .panel h2 { font-size:13px; text-transform:uppercase; letter-spacing:.08em; margin:0 0 12px; color:#5b5478; }
+  .panel h2:not(:first-child) { margin-top:20px; }
+  label.mode { display:flex; gap:8px; align-items:flex-start; font-size:13px; margin-bottom:8px; line-height:1.35; }
+  label.mode span b { display:block; font-weight:600; }
+  label.mode span i { color:#5b5478; font-style:normal; font-size:11px; }
+  button { font:inherit; font-size:13px; color:#fff; background:#8D04FD; border:0;
+    padding:9px 16px; border-radius:999px; cursor:pointer; font-weight:600; }
+  button.ghost { background:transparent; color:#5b5478; border:1px solid rgba(23,0,63,.2); }
+  .readout { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:11px; line-height:1.8;
+    background:#F4F4D0; border-radius:8px; padding:10px; }
+  .readout b { color:#8D04FD; }
+  .log { font-family:ui-monospace,Menlo,monospace; font-size:11px; line-height:1.6; white-space:pre-wrap;
+    background:#17003F; color:#d7cfff; border-radius:8px; padding:10px; max-height:240px; overflow:auto; }
+
+  /* ---- Webflow's own base CSS, reproduced verbatim so the test is honest ----------------------
+     The state blocks are display:none in BOTH the inline style AND webflow.css. Reproducing both is
+     the whole point: it's what showState() has to defeat, and a harness that only had the inline
+     rule would pass while the real site stayed blank. */
+  .w-form { margin:0 0 15px; }
+  .w-form-done { display:none; padding:20px; text-align:center; background-color:#dddddd; }
+  .w-form-fail { display:none; margin-top:10px; padding:10px; background-color:#ffdede; }
+  .hide { display:none; }
+
+  /* ---- stand-ins for the real Webflow classes ---- */
+  .cta-options-newsletter-form { max-width:420px; }
+  .cta-options-newsletter-input { width:100%; font:inherit; font-size:14px; padding:10px 12px;
+    border:1px solid rgba(23,0,63,.25); border-radius:8px; }
+  .u-mb-12 { margin-bottom:12px; } .u-mb-16 { margin-bottom:16px; }
+  .text-small { font-size:13px; } .text-tiny { font-size:11px; }
+  .text-mono { font-family:ui-monospace,Menlo,monospace; }
+  .opacity-40 { opacity:.4; } .opacity-60 { opacity:.6; }
+  .btn { display:inline-block; margin-top:12px; padding:11px 20px; border-radius:999px;
+    background:#17003F; color:#fff; text-decoration:none; font-size:14px; font-weight:600; }
+
+  /* ---- the states, driven purely from CSS — this is the part you'd style in Webflow ---- */
+  .btn[data-button-state="submitting"] { opacity:.55; cursor:progress; }
+  form[data-form-state="submitting"] .cta-options-newsletter-input { opacity:.6; }
+  .w-form[data-form-state="fail"] .btn { background:#b91c1c; }
+</style>
+</head>
+<body data-barba="wrapper"><main data-barba="container">
+<div class="page">
+  <header>
+    <h1>Loops newsletter form</h1>
+    <p class="sub">The real Webflow markup + the real <code>dist/index.js</code>. Everything except the
+      network is genuine, so this exercises the capture-phase interception, the payload, all four states and
+      the <code>form-trigger</code> button mirror. Pick a response below — the stub adds a deliberate 1.2s
+      delay so the <b>sending</b> state is actually observable instead of a one-frame flash.</p>
+  </header>
+
+  <div class="layout">
+    <div class="stage">
+      <!-- Webflow's Form Block, exactly as it renders: .w-form wrapper + done/fail siblings ------->
+      <div class="w-form">
+        <form id="email-form" name="email-form" data-name="Email Form" method="get"
+          class="cta-options-newsletter-form"
+          data-loops-form="cmlzpeb870beh0h0t8wbqbula"
+          data-loops-user-group="Waitlist"
+          aria-label="Email Form">
+          <div class="max-width-full">
+            <div class="u-mb-12"><div class="opacity-40"><div class="text-color-darker-grey">
+              <label for="email" class="text-small">Your email</label>
+            </div></div></div>
+            <input class="cta-options-newsletter-input w-input" maxlength="256" name="email"
+              data-name="Email" placeholder="Your email" type="email" id="email" required="">
+          </div>
+          <div>
+            <div class="u-mb-16">
+              <a data-button-instance="form-trigger" data-button-056="" data-button-theme="secondary"
+                href="#" class="btn w-inline-block" data-button-state="idle">
+                <span class="btn_inner"><span class="btn_text-outer">
+                  <span data-button-056-text="" data-button-instance="" class="btn_text" aria-label="Send message">
+                    <span class="btn_split-word" aria-hidden="true" style="--word: 1; display: inline-block;">Send</span>
+                    <span class="btn_split-word" aria-hidden="true" style="--word: 2; display: inline-block;">message</span>
+                  </span>
+                </span></span>
+              </a>
+            </div>
+            <div class="opacity-60"><p class="text-tiny text-mono">No spam. Unsubscribe any time.</p></div>
+          </div>
+          <input type="submit" data-wait="Please wait..." class="hide w-button" value="Submit">
+        </form>
+        <div class="w-form-done" tabindex="-1" role="region" aria-label="Email Form success">
+          <div>Thank you! Your submission has been received!</div>
+        </div>
+        <div class="w-form-fail" tabindex="-1" role="region" aria-label="Email Form failure">
+          <div>Oops! Something went wrong while submitting the form.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Response</h2>
+      <label class="mode"><input type="radio" name="mode" value="ok" checked>
+        <span><b>200 OK</b><i>success path — done block, reset, focus</i></span></label>
+      <label class="mode"><input type="radio" name="mode" value="429">
+        <span><b>4xx + JSON message</b><i>proves Loops' own message reaches .w-form-fail</i></span></label>
+      <label class="mode"><input type="radio" name="mode" value="500">
+        <span><b>500, no JSON body</b><i>falls back to statusText</i></span></label>
+      <label class="mode"><input type="radio" name="mode" value="throw">
+        <span><b>Failed to fetch</b><i>CORS/Cloudflare — maps to rate-limit copy</i></span></label>
+      <label class="mode"><input type="radio" name="mode" value="real">
+        <span><b>Real Loops endpoint</b><i>⚠️ adds a real contact to the client's list</i></span></label>
+
+      <h2>Live state</h2>
+      <div class="readout" id="readout"></div>
+
+      <h2>Controls</h2>
+      <button class="ghost" id="reset">Reset to idle</button>
+      <button class="ghost" id="clear">Clear 60s guard</button>
+
+      <h2>POST log</h2>
+      <div class="log" id="log">waiting for a submit…</div>
+    </div>
+  </div>
+</div>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/@barba/core@2.10.3/dist/barba.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/lenis@1.3.17/dist/lenis.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.15/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.15/dist/ScrollTrigger.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.15/dist/CustomEase.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.15/dist/SplitText.min.js"></script>
+<script>
+  const logEl = document.getElementById('log');
+  const mode = () => document.querySelector('input[name=mode]:checked').value;
+  const say = (msg) => {
+    logEl.textContent = msg + '\n\n' + logEl.textContent;
+  };
+
+  // Stub the network, not the module: the code under test calls global fetch, so patching it here leaves
+  // every other code path — interception, payload building, state machine — completely untouched.
+  const realFetch = window.fetch.bind(window);
+  window.fetch = async (url, opts) => {
+    const m = mode();
+    say(
+      'POST ' + url + '\n' +
+        'content-type: ' + (opts.headers['Content-Type'] || '') + '\n' +
+        'body: ' + opts.body + '\n' +
+        '→ mode: ' + m
+    );
+    if (m === 'real') return realFetch(url, opts);
+
+    await new Promise((r) => setTimeout(r, 1200)); // long enough to SEE the sending state
+    if (m === 'throw') throw new TypeError('Failed to fetch');
+    if (m === 'ok') return new Response('{}', { status: 200 });
+    // deliberately NOT the module's own rate-limit copy — if this exact string reaches .w-form-fail, the
+    // JSON message really came from the response and isn't a fallback that happens to read the same
+    if (m === '429')
+      return new Response(JSON.stringify({ message: 'Loops says: that address is already subscribed' }), {
+        status: 429,
+      });
+    return new Response('<html>gateway</html>', { status: 500, statusText: 'Internal Server Error' });
+  };
+
+  // Live state readout — the sending state is otherwise invisible, and this proves the button mirror is
+  // being driven by the submit input's label rather than by anything the module touches directly.
+  const form = document.getElementById('email-form');
+  const wrap = form.closest('.w-form');
+  const trigger = form.querySelector('[data-button-instance="form-trigger"]');
+  const submit = form.querySelector('input[type=submit]');
+  const done = wrap.querySelector('.w-form-done');
+  const fail = wrap.querySelector('.w-form-fail');
+  const readout = document.getElementById('readout');
+
+  const disp = (el) => getComputedStyle(el).display;
+  setInterval(() => {
+    const stamp = Number(localStorage.getItem('loops-form-timestamp'));
+    const left = stamp ? Math.max(0, Math.ceil((stamp + 60000 - Date.now()) / 1000)) : 0;
+    readout.innerHTML =
+      'form[data-form-state]  <b>' + form.getAttribute('data-form-state') + '</b><br>' +
+      'wrap[data-form-state]  <b>' + wrap.getAttribute('data-form-state') + '</b><br>' +
+      'btn[data-button-state] <b>' + trigger.getAttribute('data-button-state') + '</b><br>' +
+      'btn aria-disabled      <b>' + trigger.getAttribute('aria-disabled') + '</b><br>' +
+      'submit.value           <b>' + submit.value + '</b><br>' +
+      'btn label              <b>' + trigger.textContent.trim().replace(/\s+/g, ' ') + '</b><br>' +
+      'form display           <b>' + disp(form) + '</b><br>' +
+      '.w-form-done display   <b>' + disp(done) + '</b><br>' +
+      '.w-form-fail display   <b>' + disp(fail) + '</b><br>' +
+      '60s guard              <b>' + (left ? left + 's left' : 'clear') + '</b>';
+  }, 100);
+
+  document.getElementById('reset').addEventListener('click', () => {
+    form.style.display = '';
+    done.style.display = 'none';
+    fail.style.display = 'none';
+    form.setAttribute('data-form-state', 'idle');
+    wrap.setAttribute('data-form-state', 'idle');
+    form.reset();
+  });
+  document.getElementById('clear').addEventListener('click', () => {
+    localStorage.removeItem('loops-form-timestamp');
+  });
+</script>
+<script defer src="../dist/index.js"></script>
+</body>
+</html>
