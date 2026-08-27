@@ -27,6 +27,7 @@ import {
   initStickyStepsFlip,
 } from './animations.js';
 import { initAnchorLinks, initHeadingAnchors } from './anchors.js';
+import { cleanupMarketplaceSearch, initMarketplaceSearch } from './marketplace-search.js';
 import { initCalendly } from './calendly.js';
 import { initFilterShortcuts, initResourcesFilter } from './filters.js';
 import { initFormTriggers, initLoopsForms } from './forms.js';
@@ -97,6 +98,7 @@ function initOnceFunctions() {
   if (has('[data-search-wrapper]')) run('initSearchAction', () => initSearchAction(document));
   if (has('[data-search-wrapper]')) run('initSearchDock', () => initSearchDock(document));
   if (document.querySelector('[data-suggestion-item]')) run('initSearchSuggestions', () => initSearchSuggestions(document)); // may sit in the dock clone on <body>
+  run('initMarketplaceSearch', initMarketplaceSearch); // delegated on document — covers the dock clone too, binds once
   if (has('.resources-filter')) run('initResourcesFilter', () => initResourcesFilter(nextPage));
   if (has('.resources-filter')) run('initFilterShortcuts', initFilterShortcuts);
   if (has('[data-calendly]')) run('initCalendly', () => initCalendly(nextPage));
@@ -140,9 +142,12 @@ function initAfterEnterFunctions(next) {
   if (has('[data-card-border]')) run('initCardBorderHover', () => initCardBorderHover(nextPage));
   // unconditional: a page WITHOUT a search still has to clear the previous page's dock
   run('cleanupSearchDock', cleanupSearchDock);
+  // also unconditional: the suggestions panel lives on <body>, outside the container
+  run('cleanupMarketplaceSearch', cleanupMarketplaceSearch);
   if (has('[data-search-wrapper]')) run('initSearchAction', () => initSearchAction(nextPage));
   if (has('[data-search-wrapper]')) run('initSearchDock', () => initSearchDock(nextPage));
   if (document.querySelector('[data-suggestion-item]')) run('initSearchSuggestions', () => initSearchSuggestions(document));
+  run('initMarketplaceSearch', initMarketplaceSearch); // listeners bind once; no-op on later pages
   if (has('.resources-filter')) run('initResourcesFilter', () => initResourcesFilter(nextPage));
   if (has('.resources-filter')) run('initFilterShortcuts', initFilterShortcuts);
   if (has('[data-calendly]')) run('initCalendly', () => initCalendly(nextPage));

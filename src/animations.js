@@ -6,6 +6,7 @@
 // touch the new page's elements. gsap + SplitText + ScrollTrigger are ambient CDN globals
 // (registered in index.js).
 
+import { searchHandoffURL } from './marketplace-search.js';
 import DotField from './dotfield.js'; // matter.js physics visual; matter is bundled by esbuild
 import DotMap from './dotmap.js'; // lightweight canvas-2D dot-artwork reveal (for many-per-page maps)
 
@@ -2095,11 +2096,13 @@ export function initSearchSuggestions(scope = document) {
 // accidental submit input, Webflow's own form handler) is killed and replaced with a redirect to
 // the search app.
 //
-// Attrs on [data-search-wrapper] — the destination is NOT hardcoded here; both of these are
-// required and the search simply won't navigate without them (a default URL baked into the bundle
-// is a second place the truth lives, and it silently keeps working after someone removes the attr):
-//   data-search-action  base URL, e.g. https://app.modernvivo.com/marketplace/new_search
-//   data-search-param   query key, e.g. "query"
+// Attrs on [data-search-wrapper] — the destination is NOT hardcoded here; without one of the two
+// URL attrs the search simply won't navigate (a default URL baked into the bundle is a second place
+// the truth lives, and it silently keeps working after someone removes the attr):
+//   data-search-handoff app handoff base URL — the query goes in the FRAGMENT as
+//                       #type=prompt&query=... (see marketplace-search.js). Takes precedence.
+//   data-search-action  legacy base URL, e.g. https://app.modernvivo.com/marketplace/new_search
+//   data-search-param   legacy query key, e.g. "query"
 //   data-search-target  "_blank" to open in a new tab (def same tab)
 //   data-search-submit  put this on the "Find vendors" button; falls back to the first
 //                       <a>/<button>/submit inside the search if absent
@@ -2130,6 +2133,11 @@ function killSearchSubmit() {
   );
 }
 
+function navigateTo(href, target) {
+  if (target === '_blank') window.open(href, '_blank', 'noopener');
+  else window.location.href = href;
+}
+
 export function initSearchAction(scope = document) {
   killSearchSubmit();
 
@@ -2147,15 +2155,24 @@ export function initSearchAction(scope = document) {
       return;
     }
 
+    const target = wrapper.getAttribute('data-search-target');
+
+    // Preferred path: hand the raw query to the app as a prompt. Identical URL to the dropdown's
+    // "Search with AI" row — same builder, so the two can't drift.
+    const handoff = searchHandoffURL(wrapper, { type: 'prompt', query });
+    if (handoff) {
+      navigateTo(handoff, target);
+      return;
+    }
+
     const base = wrapper.getAttribute('data-search-action');
     const param = wrapper.getAttribute('data-search-param');
-    const target = wrapper.getAttribute('data-search-target');
 
     // say so rather than failing mutely — a search button that does nothing is otherwise
     // indistinguishable from a broken script
     if (!base || !param) {
       console.warn(
-        '[search] missing ' +
+        '[search] missing data-search-handoff, or ' +
           (!base ? 'data-search-action' : '') +
           (!base && !param ? ' and ' : '') +
           (!param ? 'data-search-param' : '') +
@@ -2174,13 +2191,7 @@ export function initSearchAction(scope = document) {
     }
     url.searchParams.set(param, query);
 
-    const href = url.toString();
-
-    if (target === '_blank') {
-      window.open(href, '_blank', 'noopener');
-    } else {
-      window.location.href = href;
-    }
+    navigateTo(url.toString(), target);
   };
 
   // expose it so the docked clone's forwarding ends up here too, and so it can be fired manually

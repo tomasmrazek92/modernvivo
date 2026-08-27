@@ -86,6 +86,179 @@ matter.js is only needed on pages that use `[data-dotfield]` (the physics dot vi
 
 (Pin a tag like `@v1.0.0` instead of `@main` for a cached, stable release.)
 
+## Marketplace search dropdown — styling
+
+`src/marketplace-search.js` injects its own defaults sheet as the FIRST thing in `<head>`, so anything
+you write in the Webflow head embed overrides it at equal specificity. The dropdown therefore looks
+right with no CSS in Webflow at all — the embed is only for retheming.
+
+### DOM the JS builds (on `<body>`, `position:fixed`)
+
+```html
+<div data-search-suggest-panel data-search-suggest-state="open" data-search-suggest-dir="down">
+  <div data-search-suggest-list>
+    <div data-search-suggest-option data-search-suggest-index="0">Bladder <mark>Cancer</mark></div>
+    <p data-search-suggest-note>No matching terms</p>      <!-- only when the list is empty -->
+  </div>
+  <div data-search-suggest-ai><svg/><span>Search with AI</span><em>"cancer"</em></div>
+</div>
+```
+
+`data-search-suggest-active` marks the keyboard-highlighted row. `data-search-suggest-dir` is `up` when
+the panel opens above the field (the docked bar).
+
+### The 90% case — retheme from one block
+
+```css
+[data-search-suggest-panel] {
+  --suggest-bg: #fffff2;        /* panel background */
+  --suggest-border: #c6c6a2;    /* outer border + the AI row's top rule */
+  --suggest-text: #242228;      /* row text */
+  --suggest-hover: #f4f4d0;     /* hover + keyboard-active row */
+  --suggest-mark: #fffbae;      /* the matched substring */
+  --suggest-muted: #a0a083;     /* "No matching terms" + the quoted query */
+  --suggest-ai: #8d04fd;        /* "Search with AI" label + icon */
+  --suggest-pad: 0.75em 1.25em; /* row padding */
+  --suggest-radius: 0px;
+  --suggest-gap: 8px;           /* distance from the input (JS reads this) */
+}
+```
+
+Motion tokens on the same element: `--dropdown-open-dur` (250ms), `--dropdown-close-dur` (150ms),
+`--dropdown-pre-scale` (.97), `--dropdown-closing-scale` (.99), `--dropdown-ease`.
+
+### Do not override
+
+The panel's `position: fixed`, `display: flex` + `flex-direction: column`, and the list's
+`overflow-y: auto` + `min-height: 0` are the mechanism, not decoration — JS sets `left/top/width/
+max-height/font-size` inline every frame, and the column flex is what keeps the AI row pinned while the
+list scrolls. Restyle colour, type, padding, radius, shadow freely.
+
+### Full defaults sheet (what the JS injects)
+
+```css
+[data-search-suggest-panel] {
+  --suggest-bg: var(--white, #fffff2);
+  --suggest-border: var(--dark-grey-yellow, #c6c6a2);
+  --suggest-text: var(--almost-black, #242228);
+  --suggest-hover: var(--grey-yellow, #f4f4d0);
+  --suggest-mark: var(--yellow-light, #fffbae);
+  --suggest-muted: var(--darker-grey-yellow, #a0a083);
+  --suggest-ai: var(--purple, #8d04fd);
+  --suggest-pad: 0.75em 1.25em;
+  --suggest-radius: 0px;
+  --suggest-gap: 8px;
+  --dropdown-open-dur: 250ms;
+  --dropdown-close-dur: 150ms;
+  --dropdown-pre-scale: 0.97;
+  --dropdown-closing-scale: 0.99;
+  --dropdown-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  position: fixed;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-sizing: border-box;
+  border: 1px solid var(--suggest-border);
+  border-radius: var(--suggest-radius);
+  background-color: var(--suggest-bg);
+  color: var(--suggest-text);
+  font-family: "DM Mono", Arial, sans-serif;
+  font-weight: 400;
+  line-height: 1.3;
+  letter-spacing: -0.02em;
+  text-align: left;
+  box-shadow: 0 1.5em 2.5em -1.5em rgba(23, 0, 63, 0.35);
+  transform-origin: top center;
+  transform: scale(var(--dropdown-pre-scale));
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    transform var(--dropdown-open-dur) var(--dropdown-ease),
+    opacity   var(--dropdown-open-dur) var(--dropdown-ease);
+  will-change: transform, opacity;
+}
+[data-search-suggest-panel][data-search-suggest-dir="up"] { transform-origin: bottom center; }
+[data-search-suggest-panel][data-search-suggest-state="open"] {
+  transform: scale(1);
+  opacity: 1;
+  pointer-events: auto;
+}
+[data-search-suggest-panel][data-search-suggest-state="closing"] {
+  transform: scale(var(--dropdown-closing-scale));
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    transform var(--dropdown-close-dur) var(--dropdown-ease),
+    opacity   var(--dropdown-close-dur) var(--dropdown-ease);
+}
+
+[data-search-suggest-list] {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+[data-search-suggest-option],
+[data-search-suggest-ai],
+[data-search-suggest-note] {
+  margin: 0;
+  padding: var(--suggest-pad);
+  font-size: 1em;
+  transition: background-color .2s cubic-bezier(.215, .61, .355, 1);
+}
+/* block, not flex: the match highlight is an inline <mark> inside the label and flex would make
+   every text node its own item, breaking the term across gaps mid-word */
+[data-search-suggest-option],
+[data-search-suggest-note] {
+  display: block;
+  overflow-wrap: break-word;
+}
+[data-search-suggest-option] { cursor: pointer; }
+[data-search-suggest-option][data-search-suggest-active],
+[data-search-suggest-option]:hover {
+  background-color: var(--suggest-hover);
+}
+[data-search-suggest-option] mark {
+  background-color: var(--suggest-mark);
+  color: inherit;
+}
+[data-search-suggest-note] {
+  color: var(--suggest-muted);
+  cursor: default;
+}
+
+[data-search-suggest-ai] {
+  display: flex;
+  align-items: center;
+  gap: 0.75em;
+  flex: 0 0 auto;
+  cursor: pointer;
+  border-top: 1px solid var(--suggest-border);
+  background-color: var(--suggest-bg);
+  color: var(--suggest-ai);
+}
+[data-search-suggest-ai][data-search-suggest-active],
+[data-search-suggest-ai]:hover {
+  background-color: var(--suggest-hover);
+}
+[data-search-suggest-ai] svg { flex: 0 0 auto; width: 1em; height: 1em; }
+[data-search-suggest-ai] em {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--suggest-muted);
+  font-style: normal;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-search-suggest-panel] { transition: none !important; }
+}
+```
+
 ## Hero config
 Full default preset (Tom's exported values) is the `DEFAULTS` object in `src/shapefield.js`. Override per-page
 on the mount div, e.g. `data-shapefield-config='{"spin":{"speed":0.6},"warp":{"amount":0.05}}'`.
