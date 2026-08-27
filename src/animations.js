@@ -1907,6 +1907,12 @@ export function initSearchDock(scope = document) {
   // strip effect hooks so a later init pass can't re-run them on the copy (initButton056 would
   // split the already-split label a second time)
   dock.querySelectorAll('[data-button-056]').forEach((el) => el.removeAttribute('data-button-056'));
+  // the suggestions panel now lives inside the field's wrap, so a dock built while it is open would
+  // copy a frozen list into the clone
+  dock.querySelectorAll('[data-search-suggest-panel]').forEach((el) => el.remove());
+  dock
+    .querySelectorAll('[data-search-suggest-anchor]')
+    .forEach((el) => el.removeAttribute('data-search-suggest-anchor'));
   document.body.appendChild(dock);
 
   const fieldSel = 'input:not([type="submit"]):not([type="hidden"]), textarea, select';

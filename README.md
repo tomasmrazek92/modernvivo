@@ -92,7 +92,7 @@ matter.js is only needed on pages that use `[data-dotfield]` (the physics dot vi
 you write in the Webflow head embed overrides it at equal specificity. The dropdown therefore looks
 right with no CSS in Webflow at all — the embed is only for retheming.
 
-### DOM the JS builds (on `<body>`, `position:fixed`)
+### DOM the JS builds (inside the input's wrap, `position:absolute`)
 
 ```html
 <div data-search-suggest-panel data-search-suggest-state="open" data-search-suggest-dir="down">
@@ -104,8 +104,10 @@ right with no CSS in Webflow at all — the embed is only for retheming.
 </div>
 ```
 
-`data-search-suggest-active` marks the keyboard-highlighted row. `data-search-suggest-dir` is `up` when
-the panel opens above the field (the docked bar).
+The panel is appended into the field's own parent (stamped `data-search-suggest-anchor`, which gets
+`position:relative`), so it scrolls with the page — no JS geometry, and immune to the mobile URL bar
+resizing the viewport mid-scroll. `data-search-suggest-active` marks the keyboard-highlighted row.
+`data-search-suggest-dir` is `up` only inside the docked bar, `down` everywhere else.
 
 ### The 90% case — retheme from one block
 
@@ -129,14 +131,17 @@ Motion tokens on the same element: `--dropdown-open-dur` (250ms), `--dropdown-cl
 
 ### Do not override
 
-The panel's `position: fixed`, `display: flex` + `flex-direction: column`, and the list's
-`overflow-y: auto` + `min-height: 0` are the mechanism, not decoration — JS sets `left/top/width/
-max-height/font-size` inline every frame, and the column flex is what keeps the AI row pinned while the
-list scrolls. Restyle colour, type, padding, radius, shadow freely.
+The panel's `position: absolute` + `left/right: 0`, its `display: flex` + `flex-direction: column`, the
+`top/bottom: calc(100% + var(--suggest-gap))` pair, and the list's `overflow-y: auto` + `min-height: 0`
+are the mechanism, not decoration — the column flex is what keeps the AI row pinned while the list
+scrolls. `max-height` uses `vh` deliberately, NOT `dvh`: `dvh` changes as the mobile URL bar collapses
+and would resize the panel mid-scroll. Restyle colour, type, padding, radius, shadow freely.
 
 ### Full defaults sheet (what the JS injects)
 
 ```css
+[data-search-suggest-anchor] { position: relative; }
+
 [data-search-suggest-panel] {
   --suggest-bg: var(--white, #fffff2);
   --suggest-border: var(--dark-grey-yellow, #c6c6a2);
@@ -153,8 +158,12 @@ list scrolls. Restyle colour, type, padding, radius, shadow freely.
   --dropdown-pre-scale: 0.97;
   --dropdown-closing-scale: 0.99;
   --dropdown-ease: cubic-bezier(0.22, 1, 0.36, 1);
-  position: fixed;
-  z-index: 9999;
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 900;
+  /* vh, not dvh: the mobile URL bar collapsing must not resize the panel mid-scroll */
+  max-height: min(24em, 45vh);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -169,7 +178,6 @@ list scrolls. Restyle colour, type, padding, radius, shadow freely.
   letter-spacing: -0.02em;
   text-align: left;
   box-shadow: 0 1.5em 2.5em -1.5em rgba(23, 0, 63, 0.35);
-  transform-origin: top center;
   transform: scale(var(--dropdown-pre-scale));
   opacity: 0;
   pointer-events: none;
@@ -178,7 +186,14 @@ list scrolls. Restyle colour, type, padding, radius, shadow freely.
     opacity   var(--dropdown-open-dur) var(--dropdown-ease);
   will-change: transform, opacity;
 }
-[data-search-suggest-panel][data-search-suggest-dir="up"] { transform-origin: bottom center; }
+[data-search-suggest-panel][data-search-suggest-dir="down"] {
+  top: calc(100% + var(--suggest-gap));
+  transform-origin: top center;
+}
+[data-search-suggest-panel][data-search-suggest-dir="up"] {
+  bottom: calc(100% + var(--suggest-gap));
+  transform-origin: bottom center;
+}
 [data-search-suggest-panel][data-search-suggest-state="open"] {
   transform: scale(1);
   opacity: 1;

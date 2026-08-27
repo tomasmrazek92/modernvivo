@@ -40,7 +40,6 @@ let closeTimer = null;
 let blurTimer = null;
 let controller = null; // in-flight fetch
 let requestSeq = 0;
-let frame = 0;
 
 // ---- config -------------------------------------------------------------------------------------
 
@@ -110,6 +109,8 @@ function injectCSS() {
   const style = document.createElement('style');
   style.id = 'search-suggest-css';
   style.textContent = `
+[data-search-suggest-anchor] { position: relative; }
+
 [data-search-suggest-panel] {
   --suggest-bg: var(--white, #fffff2);
   --suggest-border: var(--dark-grey-yellow, #c6c6a2);
@@ -126,8 +127,12 @@ function injectCSS() {
   --dropdown-pre-scale: 0.97;
   --dropdown-closing-scale: 0.99;
   --dropdown-ease: cubic-bezier(0.22, 1, 0.36, 1);
-  position: fixed;
-  z-index: 9999;
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 900;
+  /* vh, not dvh: the mobile URL bar collapsing must not resize the panel mid-scroll */
+  max-height: min(24em, 45vh);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -142,7 +147,6 @@ function injectCSS() {
   letter-spacing: -0.02em;
   text-align: left;
   box-shadow: 0 1.5em 2.5em -1.5em rgba(23, 0, 63, 0.35);
-  transform-origin: top center;
   transform: scale(var(--dropdown-pre-scale));
   opacity: 0;
   pointer-events: none;
@@ -151,7 +155,14 @@ function injectCSS() {
     opacity   var(--dropdown-open-dur) var(--dropdown-ease);
   will-change: transform, opacity;
 }
-[data-search-suggest-panel][data-search-suggest-dir="up"] { transform-origin: bottom center; }
+[data-search-suggest-panel][data-search-suggest-dir="down"] {
+  top: calc(100% + var(--suggest-gap));
+  transform-origin: top center;
+}
+[data-search-suggest-panel][data-search-suggest-dir="up"] {
+  bottom: calc(100% + var(--suggest-gap));
+  transform-origin: bottom center;
+}
 [data-search-suggest-panel][data-search-suggest-state="open"] {
   transform: scale(1);
   opacity: 1;
@@ -321,7 +332,6 @@ function render(state) {
   ai.querySelector('em').textContent = query ? `"${query}"` : '';
 
   paintActive();
-  place();
 }
 
 function paintActive() {
@@ -352,41 +362,23 @@ function revealOption(el) {
   else if (bottom > list.scrollTop + list.clientHeight) list.scrollTop = bottom - list.clientHeight;
 }
 
-// Anchored to the field's live box every frame while open: Lenis scroll, the dock sliding up and a
-// resize all move it, and a fixed panel would otherwise drift off the input.
-function place() {
+// The panel is a child of the field's own wrap, so scrolling moves it for free. This runs ONCE per
+// open (and on a width change), not per frame: a fixed panel repositioned every rAF drifts badly on
+// mobile, where the URL bar collapsing changes innerHeight mid-scroll and iOS doesn't repaint fixed
+// elements during momentum scroll.
+function fit() {
   if (!panel || !anchor) return;
-  if (!anchor.isConnected) return close();
 
-  const r = anchor.getBoundingClientRect();
-  if (r.bottom < 0 || r.top > window.innerHeight) return close(); // the field scrolled away
-
-  const gap = parseFloat(getComputedStyle(panel).getPropertyValue('--suggest-gap')) || 8;
-  const edge = 16; // never let the panel sit flush against the viewport edge
-  const below = window.innerHeight - r.bottom - gap - edge;
-  const above = r.top - gap - edge;
-  const up = below < 180 && above > below; // docked at the bottom of the screen: open upwards
-
-  panel.setAttribute('data-search-suggest-dir', up ? 'up' : 'down');
-  panel.style.left = `${Math.round(r.left)}px`;
-  panel.style.width = `${Math.round(r.width)}px`;
-  if (up) {
-    panel.style.top = 'auto';
-    panel.style.bottom = `${Math.round(window.innerHeight - r.top + gap)}px`;
-  } else {
-    panel.style.bottom = 'auto';
-    panel.style.top = `${Math.round(r.bottom + gap)}px`;
-  }
-
+  // match the field's own type size, so a row reads at the size you typed at any breakpoint
   const fontPx = parseFloat(getComputedStyle(anchor).fontSize) || 14;
   panel.style.fontSize = `${fontPx}px`;
-  panel.style.maxHeight = `${Math.max(fontPx * 6, Math.min(up ? above : below, fontPx * 24))}px`;
-}
 
-function tick() {
-  if (!panel) return;
-  place();
-  frame = requestAnimationFrame(tick);
+  // Direction is decided by CONTEXT, not by measured space: the docked bar is pinned to the bottom
+  // edge so it can only open upwards, everything else opens down. A space-based test flips direction
+  // mid-scroll and, on mobile, opens over the heading at rest — running past the fold is the lesser
+  // evil, and the page scrolls.
+  const docked = !!anchor.closest('[data-search-dock-clone]');
+  panel.setAttribute('data-search-suggest-dir', docked ? 'up' : 'down');
 }
 
 function open(field) {
@@ -406,13 +398,18 @@ function open(field) {
   }
 
   anchor = field;
+  // parent it to the field's own wrap so it scrolls with the page instead of being positioned
+  const wrap = anchor.parentElement || document.body;
+  wrap.setAttribute('data-search-suggest-anchor', '');
+  if (panel.parentElement !== wrap) wrap.appendChild(panel);
+
   anchor.setAttribute('role', 'combobox');
   anchor.setAttribute('aria-autocomplete', 'list');
   anchor.setAttribute('aria-controls', panel.id);
   anchor.setAttribute('aria-expanded', 'true');
 
   panel.setAttribute('data-search-suggest-state', 'open');
-  if (!frame) frame = requestAnimationFrame(tick);
+  fit();
 }
 
 // `now` skips the close transition — used when the page is leaving or the anchor is gone, where an
@@ -423,8 +420,6 @@ function close(now) {
   controller?.abort();
   controller = null;
   requestSeq++;
-  cancelAnimationFrame(frame);
-  frame = 0;
 
   items = [];
   activeIndex = -1;
@@ -433,6 +428,7 @@ function close(now) {
     ['role', 'aria-autocomplete', 'aria-controls', 'aria-expanded', 'aria-activedescendant'].forEach(
       (a) => anchor.removeAttribute(a)
     );
+    anchor.parentElement?.removeAttribute('data-search-suggest-anchor');
     anchor = null;
   }
 
@@ -595,6 +591,17 @@ export function initMarketplaceSearch() {
       return;
     }
     if (panel && !e.target.closest?.(PANEL_SEL) && e.target !== anchor) close();
+  });
+
+  // Width-only: a height change on mobile is the URL bar collapsing, and re-fitting on that is the
+  // exact jitter this design removed.
+  let lastWidth = window.innerWidth;
+  let fitTimer = null;
+  window.addEventListener('resize', () => {
+    if (window.innerWidth === lastWidth) return;
+    lastWidth = window.innerWidth;
+    clearTimeout(fitTimer);
+    fitTimer = setTimeout(fit, 100);
   });
 
   // Deferred a tick so a click inside the panel (which keeps focus on the field via the mousedown
