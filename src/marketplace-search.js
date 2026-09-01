@@ -3,8 +3,9 @@
 // -----------------------------------------
 // Typing in the marketplace search hits the app's suggestions endpoint (debounced) and drops a
 // dropdown under the input: the returned terms, scrollable, with a "Search with AI" row pinned to
-// the bottom that never scrolls away. Picking a term hands off to the app by suggestion id; the AI
-// row (and the "Find vendors" button, via initSearchAction) hands off with the raw query.
+// the bottom that never scrolls away. Picking a term hands off to the app by suggestion id plus the
+// typed query; the AI row (and the "Find vendors" button, via initSearchAction) hands off with the
+// query alone.
 //
 // Attrs on [data-search-wrapper]:
 //   data-search-suggest-url    suggestions endpoint; absent = no dropdown, search still works
@@ -70,7 +71,7 @@ function readConfig(field) {
 
 // ---- handoff URLs -------------------------------------------------------------------------------
 
-// The app reads type/query/suggestionId out of the FRAGMENT, not the query string, so the params go
+// The app reads type/query/id out of the FRAGMENT, not the query string, so the params go
 // through URLSearchParams and land on url.hash. Exported because initSearchAction's "Find vendors"
 // button has to produce the identical prompt URL — one definition, two callers.
 export function searchHandoffURL(wrapper, params) {
@@ -513,7 +514,11 @@ function choose(index) {
   close(true);
 
   const href = item
-    ? searchHandoffURL(wrapper, { type: 'suggestion', suggestionId: item.id })
+    ? searchHandoffURL(wrapper, {
+        type: 'suggestion',
+        id: item.id,
+        query: value, // what the user actually typed, not the suggestion's own label
+      })
     : searchHandoffURL(wrapper, { type: 'prompt', query: value });
 
   if (!href) {
