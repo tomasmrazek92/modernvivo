@@ -92,10 +92,12 @@ export function searchHandoffURL(wrapper, params) {
   return url.toString();
 }
 
+// DEBUG BUILD (v1.13.0) — alerts the handoff URL instead of going there, so the URL can be read on
+// prod where the suggestions API's CORS actually allows a request. NOT for release: v1.12.0 is the
+// shippable tag, revert this commit before the next one.
 function navigate(href, target) {
   if (!href) return;
-  if (target === '_blank') window.open(href, '_blank', 'noopener');
-  else window.location.href = href;
+  alert(decodeURIComponent(href));
 }
 
 // ---- styles -------------------------------------------------------------------------------------
