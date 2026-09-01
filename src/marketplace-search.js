@@ -4,8 +4,8 @@
 // Typing in the marketplace search hits the app's suggestions endpoint (debounced) and drops a
 // dropdown under the input: the returned terms, scrollable, with a "Search with AI" row pinned to
 // the bottom that never scrolls away. Picking a term hands off to the app by suggestion id plus the
-// typed query; the AI row (and the "Find vendors" button, via initSearchAction) hands off with the
-// query alone.
+// term's full text; the AI row (and the "Find vendors" button, via initSearchAction) hands off with
+// the raw typed query.
 //
 // Attrs on [data-search-wrapper]:
 //   data-search-suggest-url    suggestions endpoint; absent = no dropdown, search still works
@@ -517,7 +517,7 @@ function choose(index) {
     ? searchHandoffURL(wrapper, {
         type: 'suggestion',
         id: item.id,
-        query: value, // what the user actually typed, not the suggestion's own label
+        query: item.displayText, // the full suggestion term, not the partial string typed to find it
       })
     : searchHandoffURL(wrapper, { type: 'prompt', query: value });
 
