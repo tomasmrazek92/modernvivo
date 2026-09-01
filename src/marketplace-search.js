@@ -71,7 +71,7 @@ function readConfig(field) {
 
 // ---- handoff URLs -------------------------------------------------------------------------------
 
-// The app reads type/query/id out of the FRAGMENT, not the query string, so the params go
+// The app reads type/query/suggestionId out of the FRAGMENT, not the query string, so the params go
 // through URLSearchParams and land on url.hash. Exported because initSearchAction's "Find vendors"
 // button has to produce the identical prompt URL — one definition, two callers.
 export function searchHandoffURL(wrapper, params) {
@@ -92,12 +92,10 @@ export function searchHandoffURL(wrapper, params) {
   return url.toString();
 }
 
-// DEBUG BUILD (v1.13.0) — alerts the handoff URL instead of going there, so the URL can be read on
-// prod where the suggestions API's CORS actually allows a request. NOT for release: v1.12.0 is the
-// shippable tag, revert this commit before the next one.
 function navigate(href, target) {
   if (!href) return;
-  alert(decodeURIComponent(href));
+  if (target === '_blank') window.open(href, '_blank', 'noopener');
+  else window.location.href = href;
 }
 
 // ---- styles -------------------------------------------------------------------------------------
@@ -518,7 +516,7 @@ function choose(index) {
   const href = item
     ? searchHandoffURL(wrapper, {
         type: 'suggestion',
-        id: item.id,
+        suggestionId: item.id,
         query: item.displayText, // the full suggestion term, not the partial string typed to find it
       })
     : searchHandoffURL(wrapper, { type: 'prompt', query: value });
