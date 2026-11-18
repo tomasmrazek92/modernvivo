@@ -112,6 +112,8 @@ export function initFormTriggers(scope = document) {
       // spam guard: read live state rather than a local flag, so it stays correct even if Webflow
       // (or another script) resets the form without us hearing about it
       if (trigger.getAttribute('data-button-state') === 'submitting' || submit.disabled) return;
+      // validation gate (initFormValidation) — runs before the real submit is clicked
+      if (form.__validate && !form.__validate()) return;
       submit.click(); // let the real button submit — Webflow's handler is bound to the form
     };
 
@@ -344,4 +346,204 @@ export function initLoopsForms(scope = document) {
     },
     true
   );
+}
+
+// -----------------------------------------
+// WEBFLOW FORMS AFTER BARBA — re-arm native forms on every page swap
+// -----------------------------------------
+// Webflow's forms module scans `.w-form form` once, on page load. A Barba swap brings in a form it has
+// never seen, so it has no handler data and submits as a plain GET (no Webflow submission, no
+// success/fail state). `Webflow.require('forms').ready()` re-scans; its delegated submit listener is
+// bound once behind its own guard, so calling it per page does not stack handlers.
+//
+// Turnstile: Webflow reads `[data-turnstile-sitekey]` ONCE at script load, and its re-render path for
+// later forms waits on jQuery's document "ready" event, which jQuery 3 no longer fires. So after a swap
+// Webflow never renders the widget — and if the FIRST page had a Turnstile form, it also keeps the new
+// form's submit disabled until it holds a token. We render the widget ourselves (it injects the
+// `cf-turnstile-response` input Webflow serialises) and hand the token to Webflow's form data, which
+// is what its own callback does, then re-enable the submit.
+
+let turnstileLoading = null;
+
+function loadTurnstile() {
+  if (window.turnstile) return Promise.resolve();
+  if (!turnstileLoading) {
+    turnstileLoading = new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+      s.async = true;
+      s.onload = resolve;
+      s.onerror = reject;
+      document.head.appendChild(s);
+    });
+  }
+  return turnstileLoading;
+}
+
+function renderTurnstile(scope) {
+  const forms = [...scope.querySelectorAll('form[data-turnstile-sitekey]')].filter(
+    (f) => !f.__turnstile && !f.hasAttribute('data-wf-no-turnstile')
+  );
+  if (!forms.length) return;
+  forms.forEach((f) => {
+    f.__turnstile = true;
+  });
+
+  loadTurnstile()
+    .then(() => {
+      forms.forEach((form) => {
+        // user already navigated away, or a widget is already there (never render a second one)
+        if (!form.isConnected || form.querySelector('[name="cf-turnstile-response"]')) return;
+        const box = document.createElement('div');
+        form.appendChild(box);
+        window.turnstile.render(box, {
+          sitekey: form.getAttribute('data-turnstile-sitekey'),
+          callback: (token) => {
+            const data = window.jQuery && window.jQuery.data(form, '.w-form');
+            if (data) data.turnstileToken = token;
+            const submit = form.querySelector('input[type="submit"], button[type="submit"]');
+            if (submit) {
+              submit.disabled = false;
+              submit.classList.remove('w-form-loading');
+            }
+          },
+        });
+      });
+    })
+    .catch(() => {});
+}
+
+export function reinitWebflowForms(scope = document) {
+  if (!scope.querySelector('.w-form form')) return;
+  if (window.Webflow && window.Webflow.require) {
+    const forms = window.Webflow.require('forms');
+    if (forms && forms.ready) forms.ready();
+  }
+  renderTurnstile(scope);
+}
+
+// -----------------------------------------
+// FORM VALIDATION — [data-form-validate] + [data-validate] field wrappers
+// -----------------------------------------
+// Ported from the /contact page embed, which crashed (looked for `[button-instance]`, the site uses
+// `data-button-instance`) and, being page-level, never ran after a Barba swap.
+//
+// Classes on the [data-validate] wrapper: is--filled · is--success · is--error
+// Field rules: min / max (length), type="email". A <select> is valid once its value isn't empty.
+//
+// The styled submit is initFormTriggers' job; it asks `form.__validate()` before clicking the real
+// submit, so validation gates it without a second click handler. Enter is handled here.
+
+const isSelect = (field) => field.tagName === 'SELECT';
+
+export function initFormValidation(scope = document) {
+  scope.querySelectorAll('[data-form-validate]').forEach((el) => {
+    // the attribute sits on the .w-form wrapper div in Webflow, not the <form> — the gate must live on
+    // the <form>, because initFormTriggers looks it up with trigger.closest('form')
+    const form = el.tagName === 'FORM' ? el : el.querySelector('form');
+    if (!form || form.__validate) return; // guard: re-init would stack listeners
+    const fields = form.querySelectorAll(
+      '[data-validate] input, [data-validate] textarea, [data-validate] select'
+    );
+    const submitInput = form.querySelector('input[type="submit"], button[type="submit"]');
+    const formLoadTime = Date.now();
+
+    const validateField = (field) => {
+      const parent = field.closest('[data-validate]');
+      const min = field.getAttribute('min');
+      const max = field.getAttribute('max');
+      const value = field.value.trim();
+      let isValid = true;
+
+      parent.classList.toggle('is--filled', value !== '');
+
+      if (isSelect(field)) {
+        isValid = value !== '';
+      } else {
+        if (min && field.value.length < min) isValid = false;
+        if (max && field.value.length > max) isValid = false;
+        if (field.getAttribute('type') === 'email' && !/\S+@\S+\.\S+/.test(field.value))
+          isValid = false;
+      }
+
+      parent.classList.toggle('is--success', isValid);
+      parent.classList.toggle('is--error', !isValid);
+      return isValid;
+    };
+
+    // live validation from the start, so an is--error field clears the moment it becomes valid.
+    // nice-select pushes its choice back with jQuery .trigger('change'), which no native listener
+    // hears — so selects bind through jQuery when it's there.
+    fields.forEach((field) => {
+      if (isSelect(field)) {
+        if (window.jQuery) window.jQuery(field).on('change', () => validateField(field));
+        else field.addEventListener('change', () => validateField(field));
+      } else {
+        field.addEventListener('input', () => validateField(field));
+      }
+    });
+
+    // true = OK to submit
+    form.__validate = () => {
+      let firstInvalid = null;
+      fields.forEach((field) => {
+        if (!validateField(field) && !firstInvalid) firstInvalid = field;
+      });
+
+      if (firstInvalid) {
+        // nice-select hides the real <select>; focus its generated div (tabindex="0") instead
+        const nice =
+          isSelect(firstInvalid) && firstInvalid.parentElement.querySelector('.nice-select');
+        (nice || firstInvalid).focus();
+        return false;
+      }
+
+      // anti-spam: a human doesn't fill the form within 5 s of it loading
+      if ((Date.now() - formLoadTime) / 1000 < 5) {
+        alert('Form submitted too quickly. Please try again.');
+        return false;
+      }
+      return true;
+    };
+
+    form.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' || e.target.tagName === 'TEXTAREA') return;
+      e.preventDefault();
+      if (form.__validate() && submitInput) submitInput.click();
+    });
+  });
+}
+
+// -----------------------------------------
+// NICE SELECT — styled <select> inside validated forms
+// -----------------------------------------
+// The jQuery plugin used to be a page-level <script> on /contact, so it was missing after a Barba
+// swap. Loaded on demand from cdnjs; needs Webflow's global jQuery. The plugin skips selects it
+// already wrapped, so re-running is safe.
+
+let niceSelectLoading = null;
+
+export function initNiceSelect(scope = document) {
+  const selects = scope.querySelectorAll('[data-form-validate] select');
+  if (!selects.length || !window.jQuery) return;
+
+  if (!niceSelectLoading) {
+    niceSelectLoading = window.jQuery.fn.niceSelect
+      ? Promise.resolve()
+      : new Promise((resolve, reject) => {
+          const s = document.createElement('script');
+          s.src =
+            'https://cdnjs.cloudflare.com/ajax/libs/jquery-nice-select/1.1.0/js/jquery.nice-select.min.js';
+          s.onload = resolve;
+          s.onerror = reject;
+          document.head.appendChild(s);
+        });
+  }
+
+  niceSelectLoading
+    .then(() => {
+      const fresh = [...selects].filter((s) => s.isConnected);
+      if (fresh.length) window.jQuery(fresh).niceSelect();
+    })
+    .catch(() => {});
 }

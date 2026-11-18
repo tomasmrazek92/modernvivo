@@ -30,7 +30,13 @@ import { initAnchorLinks, initHeadingAnchors } from './anchors.js';
 import { cleanupMarketplaceSearch, initMarketplaceSearch } from './marketplace-search.js';
 import { initCalendly } from './calendly.js';
 import { initFilterShortcuts, initResourcesFilter } from './filters.js';
-import { initFormTriggers, initLoopsForms } from './forms.js';
+import {
+  initFormTriggers,
+  initFormValidation,
+  initLoopsForms,
+  initNiceSelect,
+  reinitWebflowForms,
+} from './forms.js';
 import { initDodge } from './dodge.js';
 import { initHero } from './hero.js';
 
@@ -102,6 +108,8 @@ function initOnceFunctions() {
   if (has('.resources-filter')) run('initResourcesFilter', () => initResourcesFilter(nextPage));
   if (has('.resources-filter')) run('initFilterShortcuts', initFilterShortcuts);
   if (has('[data-calendly]')) run('initCalendly', () => initCalendly(nextPage));
+  if (has('[data-form-validate]')) run('initFormValidation', () => initFormValidation(nextPage));
+  if (has('[data-form-validate] select')) run('initNiceSelect', () => initNiceSelect(nextPage));
   if (has('[data-button-instance="form-trigger"]')) run('initFormTriggers', () => initFormTriggers(nextPage));
   run('initLoopsForms', () => initLoopsForms(document)); // listener binds once; re-stamps idle per page
   if (has('[data-anchors]')) run('initHeadingAnchors', () => initHeadingAnchors(nextPage));
@@ -153,6 +161,10 @@ function initAfterEnterFunctions(next) {
   if (has('.resources-filter')) run('initResourcesFilter', () => initResourcesFilter(nextPage));
   if (has('.resources-filter')) run('initFilterShortcuts', initFilterShortcuts);
   if (has('[data-calendly]')) run('initCalendly', () => initCalendly(nextPage));
+  // Webflow only arms forms present at first load — re-arm (and render Turnstile) for the swapped-in page
+  if (has('.w-form form')) run('reinitWebflowForms', () => reinitWebflowForms(nextPage));
+  if (has('[data-form-validate]')) run('initFormValidation', () => initFormValidation(nextPage));
+  if (has('[data-form-validate] select')) run('initNiceSelect', () => initNiceSelect(nextPage));
   if (has('[data-button-instance="form-trigger"]')) run('initFormTriggers', () => initFormTriggers(nextPage));
   run('initLoopsForms', () => initLoopsForms(document)); // listener binds once; re-stamps idle per page
   if (has('[data-anchors]')) run('initHeadingAnchors', () => initHeadingAnchors(nextPage));
