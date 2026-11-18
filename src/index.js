@@ -140,6 +140,8 @@ function initAfterEnterFunctions(next) {
   if (has('[data-sticky-steps-init]')) run('initStickyStepsFlip', () => initStickyStepsFlip(nextPage));
   if (has('[data-parallax="trigger"]')) run('initGlobalParallax', () => initGlobalParallax(nextPage));
   if (has('[data-card-border]')) run('initCardBorderHover', () => initCardBorderHover(nextPage));
+  // Bunny HLS player lives in Webflow footer code and only self-inits on DOMContentLoaded — re-run per Barba page
+  if (has('[data-bunny-player-init]') && window.initBunnyPlayer) run('initBunnyPlayer', () => window.initBunnyPlayer());
   // unconditional: a page WITHOUT a search still has to clear the previous page's dock
   run('cleanupSearchDock', cleanupSearchDock);
   // also unconditional: the suggestions panel lives on <body>, outside the container
@@ -298,7 +300,15 @@ barba.hooks.beforeEnter((data) => {
   applyThemeFrom(data.next.container);
 });
 
-barba.hooks.afterLeave(() => {
+barba.hooks.afterLeave((data) => {
+  // destroy the leaving page's hls.js instances so their streams don't keep loading in the background
+  data.current.container.querySelectorAll('[data-bunny-player-init]').forEach((p) => {
+    if (p._hls) {
+      p._hls.destroy();
+      p._hls = null;
+    }
+  });
+
   if (hasScrollTrigger) {
     ScrollTrigger.getAll().forEach((trigger) => trigger.kill());
   }
